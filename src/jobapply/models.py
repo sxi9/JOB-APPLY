@@ -121,6 +121,7 @@ class Job(SQLModel, table=True):
     dedupe_key: str = Field(index=True, unique=True)
     title: str
     company: str = Field(index=True)
+    company_norm: str = Field(default="", index=True)
     location: str = ""
     remote: bool = False
     posted_at: datetime | None = Field(default=None, index=True)

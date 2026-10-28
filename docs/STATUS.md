@@ -31,3 +31,13 @@ Run: `uv sync && uv run jobapply --help && uv run pytest`
 - Fixtures in `tests/fixtures/collectors/` are trimmed real responses recorded 2026-10-28, except Adzuna and JSearch, which are synthetic, built from the documented response shapes because no keys were available.
 - Live smoke run from the sandbox returned jobs from every ATS and feed adapter.
 - Stubbed or untested live: jobspy (tested with a fake scraper only), Adzuna, JSearch. Workday and Naukri/Instahyre/Cutshort/Wellfound collectors are local-build items.
+
+## 4. Dedupe, filters, scheduler — done
+
+- `pipeline.dedupe.store_jobs`: upsert per (source, source_id); exact match on hash of normalized company + title + location; fuzzy pass over the same company's jobs from the last 30 days (title ratio ≥ 92, description token-set ≥ 85). The canonical row switches to the ATS link and ATS posting time when an ATS source appears. Same-title, same-location postings at one company merge on purpose, so a user never applies twice to the same role.
+- `pipeline.filters`: `UserFilters` (roles, include/exclude keywords, locations incl. "remote", remote only, salary floor, seniority, company blocklist, sources, max age in hours) stored in `users.filters`. `assign_jobs` creates `applications` rows with status `new` per user and never re-adds a job the user already has.
+- `pipeline.collect.run_all`: runs every collector, records `collector_runs` (failures recorded, not raised), assigns new jobs. Each active user's `filters.roles` are added to search queries.
+- Scheduler (`jobapply schedule [-g collector|worker]`): APScheduler with jitter, coalescing, one instance per task. The collect interval comes from `JOBAPPLY_COLLECT_INTERVAL_MINUTES` or the admin setting.
+- Global switches (`jobapply.switches`): kill switch and dry run; env and admin toggle combine to the safe side.
+- CLI: `jobapply collect [-s source]`, `jobapply refilter`.
+- Live check: `jobapply collect -s greenhouse -s ashby -s remotive` stored 882 jobs from 900 fetched.
