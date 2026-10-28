@@ -1,0 +1,54 @@
+[project]
+name = "jobapply"
+version = "0.1.0"
+description = "Multi-user job scraper and auto-apply system"
+requires-python = ">=3.11"
+dependencies = [
+    "alembic>=1.20.1",
+    "anthropic>=2.3.0",
+    "apscheduler>=3.10,<4",
+    "cryptography>=50.0.2",
+    "fastapi>=0.162.0",
+    "fpdf2>=2.8.9",
+    "httpx>=0.28.1",
+    "itsdangerous>=2.2.0",
+    "jinja2>=3.1.6",
+    "playwright>=1.64.1",
+    "pydantic-settings>=2.16.2",
+    "python-multipart>=0.0.32",
+    "pyyaml>=6.0.3",
+    "rapidfuzz>=3.14.6",
+    "sqlmodel>=0.0.48",
+    "typer>=0.27.3",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+jobapply = "jobapply:main"
+
+[project.optional-dependencies]
+jobspy = [
+    "python-jobspy>=1.4.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.32,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
