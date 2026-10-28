@@ -1,0 +1,11 @@
+{
+ "status": "OK",
+ "data": [
+  {"job_id": "abc123==", "employer_name": "Example Corp", "job_title": "Platform Engineer",
+   "job_city": "Pune", "job_state": "MH", "job_country": "IN", "job_is_remote": false,
+   "job_posted_at_datetime_utc": "2026-10-28T04:00:00.000Z",
+   "job_apply_link": "https://boards.greenhouse.io/examplecorp/jobs/123456",
+   "job_description": "Kubernetes, Terraform, Python.", "job_min_salary": null, "job_max_salary": null,
+   "job_salary_currency": null, "job_publisher": "LinkedIn"}
+ ]
+}

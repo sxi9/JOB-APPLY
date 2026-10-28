@@ -1,0 +1,11 @@
+# Search terms for query-based sources (jobspy sites, Adzuna, JSearch).
+# Each active user's filters.roles are added to these at collect time.
+queries:
+  - python developer
+  - backend engineer
+location: ""
+hours_old: 24
+# Public feeds polled every run.
+feeds: [remotive, remoteok, jobicy, arbeitnow, themuse, hn]
+# Needs `uv sync --extra jobspy`. Indeed, LinkedIn guest search, Glassdoor, ZipRecruiter.
+jobspy_sites: []

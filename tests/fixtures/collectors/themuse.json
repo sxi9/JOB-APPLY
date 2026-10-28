@@ -1,0 +1,108 @@
+{
+ "page": 1,
+ "page_count": 1,
+ "items_per_page": 20,
+ "took": 14,
+ "timed_out": false,
+ "total": 414929,
+ "results": [
+  {
+   "contents": "<div><p>We're Celonis, the global leader in Process Mining technology and one of the world's fastest-growing SaaS firms. We believe there is a massive opportunity to unlock productivity by placing data and intelligence at the core of business processes - and for that, we need you to join us.</p></div>\n\n<p><strong>The Team:</strong><strong><br></strong>The Corporate Account Executive team is responsible for the most extensive portfolio of accounts in the company. The teams are supported by the best-in-class products, with the best sales motions, and the cooperation of other departments (Value E",
+   "name": "Account Executive- Swedish speaker",
+   "type": "external",
+   "publication_date": "2025-03-19T23:37:39Z",
+   "short_name": "account-executive-swedish-speaker",
+   "model_type": "jobs",
+   "id": 18256005,
+   "locations": [
+    {
+     "name": "Madrid, Spain"
+    }
+   ],
+   "categories": [
+    {
+     "name": "Sales"
+    }
+   ],
+   "levels": [
+    {
+     "name": "Mid Level",
+     "short_name": "mid"
+    }
+   ],
+   "tags": [],
+   "refs": {
+    "landing_page": "https://www.themuse.com/jobs/celonis/account-executive-swedish-speaker"
+   },
+   "company": {
+    "id": 15000205,
+    "short_name": "celonis",
+    "name": "Celonis"
+   }
+  },
+  {
+   "contents": "<p><b><strong>About the Role</strong></b><br><br><b><strong>What we do</strong></b><br><br>The Experimentation team provides cutting edge tooling and methodologies for all teams at Uber to make rapid decisions for their product iterations. Experimentation is an exciting domain that combines multiple disciplines of Software Engineering (Backend, Distributed Systems, Mobile, Web, Data Infra), Data Science, and Product Design. <br><br>Every major launch across any of Uber's Rides, Delivery, Earner, Freight, and Uber For Business (U4B) organizations leverages the Experimentation platform to determ",
+   "name": "Software Engineer II",
+   "type": "external",
+   "publication_date": "2026-10-22T02:42:41Z",
+   "short_name": "software-engineer-ii-d06435",
+   "model_type": "jobs",
+   "id": 22278977,
+   "locations": [
+    {
+     "name": "San Francisco, CA"
+    },
+    {
+     "name": "Sunnyvale, CA"
+    }
+   ],
+   "categories": [],
+   "levels": [
+    {
+     "name": "Mid Level",
+     "short_name": "mid"
+    }
+   ],
+   "tags": [],
+   "refs": {
+    "landing_page": "https://www.themuse.com/jobs/uber/software-engineer-ii-d06435"
+   },
+   "company": {
+    "id": 61,
+    "short_name": "uber",
+    "name": "Uber"
+   }
+  },
+  {
+   "contents": "<p><strong>$7,500 Sign On Bonus for Full Time</strong></p>\n\n<p><strong>All shifts available</strong></p>\n\n<p>Want to make a difference in someone’s life every day? As a nurse with The Laurels of Kent, you will work as part of a team providing skilled nursing and short-term rehabilitation care to our valued guests. If you have patience, compassion and a desire to care for guests in a gentle and empathetic way, you will love this role.</p>\n\n<p>The Laurels of Kent offers one of the leading employee benefit packages in the industry. This includes:</p>\n\n<ul><li><p>Health insurance- Medical, Dental ",
+   "name": "Licensed Practical Nurse (LPN) - Sign On Bonus",
+   "type": "external",
+   "publication_date": "2026-03-17T13:37:16Z",
+   "short_name": "licensed-practical-nurse-lpn-sign-on-bonus-3baf6a",
+   "model_type": "jobs",
+   "id": 21438954,
+   "locations": [
+    {
+     "name": "Caledonia, MI"
+    }
+   ],
+   "categories": [],
+   "levels": [
+    {
+     "name": "Mid Level",
+     "short_name": "mid"
+    }
+   ],
+   "tags": [],
+   "refs": {
+    "landing_page": "https://www.themuse.com/jobs/thelaurelsofkent/licensed-practical-nurse-lpn-sign-on-bonus-3baf6a"
+   },
+   "company": {
+    "id": 15000989,
+    "short_name": "thelaurelsofkent",
+    "name": "The Laurels of Kent"
+   }
+  }
+ ],
+ "aggregations": {}
+}

@@ -1,0 +1,19 @@
+# Target companies. `jobapply detect-companies` fills in ats and slug from careers_url.
+companies:
+- name: Stripe
+  ats: greenhouse
+  slug: stripe
+- name: Palantir
+  ats: lever
+  slug: palantir
+- name: Ramp
+  ats: ashby
+  slug: ramp
+- name: Hugging Face
+  ats: workable
+  slug: huggingface
+- name: Experian
+  ats: smartrecruiters
+  slug: Experian
+- name: Notion
+  careers_url: https://jobs.ashbyhq.com/notion
