@@ -118,6 +118,14 @@ def follow_ups(user: str = typer.Option(None, "--user", "-u")) -> None:
     log.info("follow-ups finished", results=follow_ups_all(user))
 
 
+@app.command()
+def summary(user: str = typer.Option(None, "--user", "-u")) -> None:
+    """Send each user their daily summary through the notifier."""
+    from jobapply.pipeline.summary import send_summaries
+
+    log.info("summaries sent", results=send_summaries(user))
+
+
 @app.command("detect-companies")
 def detect_companies_cmd() -> None:
     """Fill in ats and slug in config/companies.yaml from each careers_url."""

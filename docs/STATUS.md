@@ -84,3 +84,9 @@ Run: `uv sync && uv run jobapply --help && uv run pytest`
 - Mailbox credentials: Settings → Credentials, site `mailbox`, kind `imap` (host, port, app password) and optionally `smtp`; without an smtp entry the imap login is reused on `smtp.<host>`:587.
 - CLI `jobapply inbox [-u user]`, `jobapply follow-ups`; scheduler tasks `inbox` (every 10 min) and `follow_ups` (daily 09:30 UTC) in the worker group. Inbox page: Send reply and Forward buttons (enabled once SMTP and a forward address are set).
 - Not exercised live: no real mailbox in the sandbox. Everything runs on recorded message shapes and the fake IMAP/SMTP servers.
+
+## 9. Notifier — done
+
+- `jobapply.notify`: `Notifier` protocol, `LogNotifier`, `WhatsAppNotifier` (`POST {JOBAPPLY_WHATSAPP_BASE_URL}/send` with `{"to", "message"}` and a bearer `JOBAPPLY_WHATSAPP_TOKEN`), `MultiNotifier` fan-out. `build_notifier()` picks the WhatsApp backend when the base URL is set; `notify(session, user, kind, message)` honours each user's alert types (Settings → Notifications) and their WhatsApp number.
+- Alert kinds in use: `paused` (apply run needs a human), `interview` and `assessment` (inbox), `recruiter_question`, `daily_summary` (`jobapply summary`, scheduled 15:00 UTC).
+- Tested against a mock HTTP transport; the bridge itself is stubbed.
