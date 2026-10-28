@@ -22,6 +22,12 @@ def task_collect() -> None:
     log.info("scheduled collect", **run_all())
 
 
+def task_score() -> None:
+    from jobapply.pipeline.score import score_all
+
+    log.info("scheduled score", results=score_all())
+
+
 @dataclass
 class Task:
     name: str
@@ -41,6 +47,7 @@ def _collect_trigger() -> IntervalTrigger:
 
 TASKS: list[Task] = [
     Task("collect", task_collect, _collect_trigger, "collector"),
+    Task("score", task_score, _every(15), "worker"),
 ]
 
 

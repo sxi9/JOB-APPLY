@@ -37,11 +37,36 @@ class Settings(BaseSettings):
     # Credential vault: Fernet key (urlsafe base64, 32 bytes). Generate with `jobapply vault-key`.
     vault_key: SecretStr | None = None
 
-    # AI
-    llm_backend: str = Field("fake", description="fake | claude")
+    # AI. `llm_providers` is the failover order; a provider is used only when its key is set
+    # (ollama needs none). Users can override order, keys and models on their Settings page.
+    llm_backend: str = Field("fake", description="fake | live")
+    llm_providers: str = Field("claude,openai,gemini,openrouter,groq,together,mistral,deepseek,xai,ollama",
+                               description="comma-separated failover order")
     anthropic_api_key: SecretStr | None = None
-    claude_model: str = "claude-sonnet-5-5"
+    claude_model: str = "claude-opus-5-5"
+    claude_effort: str = Field("medium", description="low | medium | high | xhigh | max")
+    openai_api_key: SecretStr | None = None
+    openai_model: str | None = None
+    openai_base_url: str | None = None
+    gemini_api_key: SecretStr | None = None
+    gemini_model: str | None = None
+    openrouter_api_key: SecretStr | None = None
+    openrouter_model: str | None = None
+    groq_api_key: SecretStr | None = None
+    groq_model: str | None = None
+    together_api_key: SecretStr | None = None
+    together_model: str | None = None
+    mistral_api_key: SecretStr | None = None
+    mistral_model: str | None = None
+    deepseek_api_key: SecretStr | None = None
+    deepseek_model: str | None = None
+    xai_api_key: SecretStr | None = None
+    xai_model: str | None = None
+    ollama_base_url: str | None = None
+    ollama_model: str | None = None
+    llm_cooldown_minutes: int = 10  # after a rate limit / outage; quota and auth failures wait 6x longer
     score_threshold: int = 70
+    resume_cache_days: int = 30
 
     # Job APIs
     adzuna_app_id: str | None = None

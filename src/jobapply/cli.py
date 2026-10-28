@@ -28,9 +28,12 @@ def collect(source: list[str] = typer.Option(None, "--source", "-s", help="Only 
 
 
 @app.command()
-def score(user: str = typer.Option(None, "--user", "-u", help="Username, default all")) -> None:
-    """Score unscored jobs for each user."""
-    log.warning("score not implemented yet", user=user)
+def score(user: str = typer.Option(None, "--user", "-u", help="Username, default all"),
+          limit: int = typer.Option(None, "--limit", "-n")) -> None:
+    """Score new jobs for each user, tailor resume and cover letter for the ones above the threshold."""
+    from jobapply.pipeline.score import score_all
+
+    log.info("score finished", results=score_all(user, limit=limit))
 
 
 @app.command()

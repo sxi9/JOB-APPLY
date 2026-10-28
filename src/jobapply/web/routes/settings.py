@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
+from jobapply.ai.providers import CATALOG, parse_order, server_config
+from jobapply.config import get_settings
 from jobapply.models import Credential, UserSite, utcnow
 from jobapply.pipeline.filters import SENIORITY_ORDER, UserFilters
 from jobapply.vault import Vault, VaultError, mask
@@ -18,10 +20,38 @@ CREDENTIAL_KINDS = ["login", "imap", "smtp", "api_key"]
 @router.get("/settings")
 def settings_page(ctx: Ctx = Depends(get_ctx)):
     creds = ctx.scope.all(Credential, order_by=Credential.site)
-    return ctx.render("settings.html", filters=UserFilters.model_validate(ctx.view.filters or {}),
-                      prefs=ctx.view.preferences or {}, sites=ctx.scope.sites(), creds=creds, mask=mask,
-                      seniority_levels=SENIORITY_ORDER, alert_types=ALERT_TYPES, tones=TONES,
-                      credential_kinds=CREDENTIAL_KINDS)
+    prefs = ctx.view.preferences or {}
+    user_keys = {c.site for c in creds if c.kind == "api_key"}
+    order = parse_order(prefs.get("llm_providers")) or parse_order(get_settings().llm_providers)
+    providers = []
+    for name, spec in CATALOG.items():
+        cfg = server_config(name)
+        providers.append(
+            {
+                "spec": spec,
+                "enabled": name in order,
+                "position": order.index(name) + 1 if name in order else 99,
+                "server_key": bool(cfg.api_key),
+                "user_key": name in user_keys,
+                "model": (prefs.get("llm_models") or {}).get(name, ""),
+                "default_model": cfg.model,
+            }
+        )
+    providers.sort(key=lambda p: (p["position"], p["spec"].name))
+    return ctx.render(
+        "settings.html",
+        filters=UserFilters.model_validate(ctx.view.filters or {}),
+        prefs=prefs,
+        sites=ctx.scope.sites(),
+        creds=[c for c in creds if c.kind != "api_key"],
+        mask=mask,
+        seniority_levels=SENIORITY_ORDER,
+        alert_types=ALERT_TYPES,
+        tones=TONES,
+        credential_kinds=CREDENTIAL_KINDS,
+        providers=providers,
+        live=get_settings().llm_backend != "fake",
+    )
 
 
 @router.post("/settings/filters")
@@ -120,12 +150,26 @@ async def save_preferences(request: Request, ctx: Ctx = Depends(get_ctx)):
         prefs["whatsapp_number"] = str(form["whatsapp_number"]).strip()
         prefs["forward_email"] = str(form.get("forward_email") or "").strip()
         prefs["alert_types"] = as_list(form.get("alert_types"))
-    if api_key := str(form.get("anthropic_api_key") or "").strip():
-        try:
-            Vault().store(ctx.session, ctx.view.id, "anthropic", "api_key", "", {"password": api_key})
-        except VaultError as exc:
-            flash(request, str(exc), "error")
-            return RedirectResponse("/settings#ai", status_code=303)
+    if "provider_order" in form:
+        enabled = [n for n in CATALOG if form.get(f"use__{n}")]
+        order = [n for n in parse_order(form.get("provider_order")) if n in enabled]
+        order += [n for n in enabled if n not in order]
+        prefs["llm_providers"] = ",".join(order)
+        prefs["llm_models"] = {
+            n: str(form.get(f"model__{n}") or "").strip() for n in CATALOG if str(form.get(f"model__{n}") or "").strip()
+        }
+        for name in CATALOG:
+            key = str(form.get(f"key__{name}") or "").strip()
+            if key:
+                try:
+                    Vault().store(ctx.session, ctx.view.id, name, "api_key", "", {"password": key})
+                except VaultError as exc:
+                    flash(request, str(exc), "error")
+                    return RedirectResponse("/settings#ai", status_code=303)
+            elif form.get(f"clear__{name}"):
+                cred = ctx.scope.credential(name, "api_key")
+                if cred:
+                    ctx.session.delete(cred)
     prefs["updated_at"] = utcnow().isoformat()
     ctx.view.preferences = prefs
     ctx.session.add(ctx.view)

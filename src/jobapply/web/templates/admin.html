@@ -51,6 +51,23 @@
 </section>
 
 <section class="card" style="margin-top:16px">
+  <h2>LLM providers <span class="badge">backend: {{ llm_backend }}</span></h2>
+  <p class="muted small">Server failover order from <code>JOBAPPLY_LLM_PROVIDERS</code>. Health is for this process since start.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>#</th><th>Provider</th><th>Model</th><th>Server key</th><th>State</th><th>OK / failed</th><th>Last error</th></tr></thead>
+    {% for p in providers %}
+    <tr><td>{{ loop.index }}</td><td>{{ p.spec.label }}</td><td class="mono">{{ p.model }}</td>
+      <td>{% if p.server_key %}<span class="chip chip-green">set</span>{% elif not p.spec.needs_key %}<span class="chip chip-gray">n/a</span>{% else %}<span class="chip chip-amber">missing</span>{% endif %}</td>
+      <td>{% if p.health and p.health.cooling %}<span class="chip chip-red">cooling {{ (p.health.cooldown_left_s // 60) }}m</span>{% elif p.health %}<span class="chip chip-green">ok</span>{% else %}<span class="muted small">unused</span>{% endif %}</td>
+      <td>{{ p.health.successes if p.health else 0 }} / {{ p.health.failures if p.health else 0 }}</td>
+      <td class="small muted">{{ p.health.last_error if p.health else '' }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% if usage_by_model %}<p class="small muted" style="margin-top:8px">Last 30 days:
+    {% for model, calls, toks in usage_by_model %}<span class="badge">{{ model }} · {{ calls }} calls · {{ toks or 0 }} tokens</span> {% endfor %}</p>{% endif %}
+</section>
+
+<section class="card" style="margin-top:16px">
   <h2>Collector log</h2>
   <div class="table-wrap"><table>
     <thead><tr><th></th><th>Source</th><th>Started</th><th>Fetched</th><th>New</th><th>Error</th></tr></thead>
