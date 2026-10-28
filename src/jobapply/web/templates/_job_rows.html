@@ -1,0 +1,19 @@
+{% for job, app in rows %}
+<tr>
+  <td><a class="job-title" href="/jobs/{{ job.id }}">{{ job.title }}</a>
+    <div class="muted small">{{ job.company }}{% if job.remote %} · <span class="badge">remote</span>{% endif %}
+      {% set pay = job.salary_min | money(job.salary_max, job.currency) %}{% if pay %} · {{ pay }}{% endif %}</div></td>
+  <td class="hide-sm small">{{ job.location or "—" }}</td>
+  <td class="small" title="{{ job.posted_at | dt }}">{{ (job.posted_at or job.first_seen_at) | ago }}</td>
+  <td class="hide-sm"><span class="badge">{{ job.source }}</span></td>
+  <td><span class="score {{ (app.score if app else None) | score_class }}">{{ app.score if app and app.score is not none else "–" }}</span></td>
+  <td>{% if app %}<span class="chip chip-{{ app.status | status_color }}">{{ app.status | label }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+</tr>
+{% else %}
+<tr><td colspan="6" class="empty">No jobs match these filters.</td></tr>
+{% endfor %}
+{% if has_more %}
+<tr><td colspan="6" style="text-align:center">
+  <button class="btn btn-sm" hx-get="/jobs?{% for k, v in params.items() if k != 'page' %}{{ k }}={{ v | urlencode }}&{% endfor %}page={{ page + 1 }}"
+    hx-target="closest tr" hx-swap="outerHTML" hx-headers='{"HX-Target": "job-rows"}'>Load more</button></td></tr>
+{% endif %}

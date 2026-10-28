@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Overview</h1>
+<section class="tiles">
+  {% for name, value, href in tiles %}
+  <a class="card tile" href="{{ href }}"><div class="num">{{ value }}</div><div class="lbl">{{ name }}</div></a>
+  {% endfor %}
+</section>
+
+<div class="grid grid-2" style="margin-top:16px">
+  <section class="card">
+    <h2>Funnel</h2>
+    {% for name, count in funnel %}
+    <div class="funnel-row"><span class="muted">{{ name }}</span>
+      <div class="bar"><span style="width: {{ (100 * count / funnel_max) | round(1) }}%"></span></div>
+      <strong style="text-align:right">{{ count }}</strong></div>
+    {% endfor %}
+  </section>
+
+  <section class="card">
+    <h2>Collector health</h2>
+    {% if health %}
+    <div class="table-wrap"><table>
+      <tr><th></th><th>Source</th><th>Last run</th><th>Fetched</th><th>New</th></tr>
+      {% for h in health %}
+      <tr title="{{ h.run.error or '' }}">
+        <td><span class="dot {{ 'dot-ok' if h.healthy else 'dot-bad' }}"></span></td>
+        <td class="mono">{{ h.run.source }}</td><td>{{ h.run.started_at | ago }}</td>
+        <td>{{ h.run.fetched }}</td><td>{{ h.run.new }}</td>
+      </tr>
+      {% endfor %}
+    </table></div>
+    {% else %}<p class="empty">No collector runs yet.</p>{% endif %}
+  </section>
+</div>
+
+<section class="card" style="margin-top:16px">
+  <h2>Activity</h2>
+  {% if events %}
+  <ul class="feed">
+    {% for ev, app, job in events %}
+    <li>
+      {% if app.screenshot_path %}<a href="/applications/{{ app.id }}"><img class="thumb" loading="lazy"
+        src="/files/screenshot/{{ app.id }}" alt="screenshot"></a>{% endif %}
+      <div>
+        <span class="chip chip-{{ ev.kind | status_color }}">{{ ev.kind | label }}</span>
+        <a href="/jobs/{{ job.id }}">{{ job.title }}</a> <span class="muted">· {{ job.company }}</span>
+        <div class="muted small">{{ ev.detail }} · {{ ev.created_at | ago }}</div>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty">Nothing yet. Jobs that match your filters will show up here.</p>{% endif %}
+</section>
+{% endblock %}
