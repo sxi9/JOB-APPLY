@@ -1,0 +1,81 @@
+{
+ "apiVersion": "2.2.19",
+ "documentationUrl": "https://jobi.cy/apidocs",
+ "friendlyNotice": "Thanks for using Jobicy API! Please ensure Jobicy is clearly credited with a direct link to the source, and all application buttons redirect to the original job URL provided in this feed. That’s all! You might be building something amazing, we wish you the best of luck!",
+ "jobCount": 3,
+ "lastUpdate": "2026-10-28T15:15:01+00:00",
+ "nextCursor": "AgAAAABq4kgZAAAAAGriEU4AAAAAAAJn2ZGStyjVOt7ULMvdFdHp_0xjGsH--7hP_G6cSgT0AUpIVTzSNk15zXU8slhtAuBgH6eZeaijjPXov3Z-XX44aEI",
+ "hasMore": true,
+ "appliedFilters": {
+  "count": 3
+ },
+ "jobs": [
+  {
+   "id": 157644,
+   "url": "https://jobicy.com/jobs/157644-sr-software-engineer-ai-agent-orchestration-mxc",
+   "jobSlug": "157644-sr-software-engineer-ai-agent-orchestration-mxc",
+   "jobTitle": "Sr. Software Engineer, AI Agent & Orchestration (MXC)",
+   "companyName": "AlertMedia",
+   "companyLogo": "https://jobicy.com/data/server-nyc0409/galaxy/mercury/2022/03/38d8b6a506d39ead683086c25f6ac132.jpeg",
+   "jobIndustry": [
+    "Software Engineering"
+   ],
+   "jobType": [
+    "Full-Time"
+   ],
+   "jobGeo": "Mexico",
+   "jobLevel": "Senior",
+   "jobExcerpt": "Do work that matters. At AlertMedia, we help organizations protect their people, operations, and brand. Our modern Risk Intelligence and Response platform empowers teams to detect emerging threats, assess impact, and respond with confidence. We believe building resilience should be simpler—and it starts with bringing critical information and workflows together in one unified platform. Our&hellip;",
+   "jobDescription": "<p><strong>Do work that matters.</strong> </p>\n<p>At <a href=\"https://jobicy.com/company/alertmedia\" target=\"_blank\" rel=\"noopener\">AlertMedia</a>, we help organizations protect their people, operations, and brand. Our modern <strong>Risk Intelligence and Response platform</strong> empowers teams to detect emerging threats, assess impact, and respond with confidence. We believe building resilience should be simpler—and it starts with bringing critical information and workflows together in one unified platform. </p>\n<p><strong>Our core values drive us in our important mission of keeping people ",
+   "pubDate": "2026-10-28T15:15:01+00:00"
+  },
+  {
+   "id": 157658,
+   "url": "https://jobicy.com/jobs/157658-art-director-2",
+   "jobSlug": "157658-art-director-2",
+   "jobTitle": "Art Director",
+   "companyName": "StackAdapt",
+   "companyLogo": "https://jobicy.com/data/server-nyc0409/galaxy/mercury/2022/01/bf5f2bb689c6f35f6cab5459f3eff869.jpg",
+   "jobIndustry": [
+    "Creative & Design"
+   ],
+   "jobType": [
+    "Full-Time"
+   ],
+   "jobGeo": "Canada,  USA",
+   "jobLevel": "Director",
+   "jobExcerpt": "StackAdapt is the leading technology company that empowers marketers to reach, engage, and convert audiences with precision. With 465 billion automated optimizations per second, the AI-powered StackAdapt Marketing Platform seamlessly connects brand and performance marketing to drive measurable results across the entire customer journey. The most forward-thinking marketers choose StackAdapt to orchestrate high-impact campaigns across&hellip;",
+   "jobDescription": "<p><a href=\"https://jobicy.com/company/stackadapt\" target=\"_blank\" rel=\"noopener\">StackAdapt</a> is the leading technology company that empowers marketers to reach, engage, and convert audiences with precision. With 465 billion automated optimizations per second, the AI-powered StackAdapt Marketing Platform seamlessly connects brand and performance marketing to drive measurable results across the entire customer journey. The most forward-thinking marketers choose StackAdapt to orchestrate high-impact campaigns across programmatic advertising and marketing channels.</p>\n<p>The AI Art Director s",
+   "pubDate": "2026-10-28T15:14:42+00:00",
+   "salaryMin": 129882,
+   "salaryMax": 178588,
+   "salaryCurrency": "USD",
+   "salaryPeriod": "yearly"
+  },
+  {
+   "id": 157657,
+   "url": "https://jobicy.com/jobs/157657-franchise-success-manager-ii",
+   "jobSlug": "157657-franchise-success-manager-ii",
+   "jobTitle": "Franchise Success Manager II",
+   "companyName": "Toast",
+   "companyLogo": "https://jobicy.com/data/server-nyc0409/galaxy/mercury/2020/12/WRILS-201210114200-563401.png",
+   "jobIndustry": [
+    "Customer Support & Success"
+   ],
+   "jobType": [
+    "Full-Time"
+   ],
+   "jobGeo": "USA",
+   "jobLevel": "Senior",
+   "jobExcerpt": "The Franchise Success Manager II (FSM II) supports a portfolio of Toast’s largest enterprise restaurant brands. You’ll partner with Senior Customer Success Managers (CSMs) to drive net revenue retention, build customer trust, and deliver a premium experience to every franchisee and location in your book of business. This role blends three areas of work: reactive&hellip;",
+   "jobDescription": "<p>The Franchise Success Manager II (FSM II) supports a portfolio of <a href=\"https://jobicy.com/company/toast\" target=\"_blank\" rel=\"noopener\">Toast</a>’s largest enterprise restaurant brands. You’ll partner with Senior Customer Success Managers (CSMs) to drive net revenue retention, build customer trust, and deliver a premium experience to every franchisee and location in your book of business.</p>\n<p>This role blends three areas of work: reactive and administrative tasks, problem solving and quarterbacking, and account strategy and relationship building. As a Franchise Success Manager II, yo",
+   "pubDate": "2026-10-28T15:14:22+00:00",
+   "salaryMin": 70000,
+   "salaryMax": 90000,
+   "salaryCurrency": "USD",
+   "salaryPeriod": "yearly"
+  }
+ ],
+ "statusCode": 200,
+ "success": true
+}

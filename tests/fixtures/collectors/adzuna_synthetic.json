@@ -1,0 +1,13 @@
+{
+ "count": 2,
+ "results": [
+  {"id": "4810000001", "title": "Senior <strong>Python</strong> Developer", "company": {"display_name": "Example Analytics"},
+   "location": {"display_name": "Bengaluru, Karnataka", "area": ["India", "Karnataka", "Bengaluru"]},
+   "created": "2026-10-28T06:12:00Z", "redirect_url": "https://www.adzuna.in/land/ad/4810000001",
+   "description": "Build data pipelines in Python and FastAPI...", "salary_min": 2400000, "salary_max": 3600000,
+   "contract_time": "full_time"},
+  {"id": "4810000002", "title": "Backend Engineer (Remote)", "company": {"display_name": "Sample Systems"},
+   "location": {"display_name": "India"}, "created": "2026-10-27T18:40:00Z",
+   "redirect_url": "https://www.adzuna.in/land/ad/4810000002", "description": "Remote role, Go and Postgres."}
+ ]
+}

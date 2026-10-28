@@ -22,7 +22,14 @@ def _setup(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
 @app.command()
 def collect(source: list[str] = typer.Option(None, "--source", "-s", help="Only these sources")) -> None:
     """Run collectors once and store new jobs."""
-    log.warning("collect not implemented yet", sources=source)
+    from jobapply.collectors.registry import build_collectors
+
+    for c in build_collectors(only=source or None):
+        try:
+            jobs = c.collect()
+            log.info("collected", collector=c.key, count=len(jobs))
+        except Exception as exc:
+            log.error("collector failed", collector=c.key, error=str(exc))
 
 
 @app.command()
@@ -62,3 +69,14 @@ def vault_key() -> None:
     from jobapply.vault import generate_key
 
     typer.echo(generate_key())
+
+
+@app.command("detect-companies")
+def detect_companies_cmd() -> None:
+    """Fill in ats and slug in config/companies.yaml from each careers_url."""
+    from jobapply.collectors.registry import detect_companies, load_companies, save_companies
+
+    path = get_settings().companies_file
+    companies = load_companies(path)
+    if detect_companies(companies):
+        save_companies(path, companies)
