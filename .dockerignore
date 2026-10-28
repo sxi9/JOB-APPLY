@@ -1,0 +1,11 @@
+.git
+.venv
+.pytest_cache
+.ruff_cache
+data/
+backups/
+*.db
+*.db-*
+.env
+tests/
+docs/

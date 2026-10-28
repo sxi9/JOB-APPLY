@@ -90,3 +90,19 @@ Run: `uv sync && uv run jobapply --help && uv run pytest`
 - `jobapply.notify`: `Notifier` protocol, `LogNotifier`, `WhatsAppNotifier` (`POST {JOBAPPLY_WHATSAPP_BASE_URL}/send` with `{"to", "message"}` and a bearer `JOBAPPLY_WHATSAPP_TOKEN`), `MultiNotifier` fan-out. `build_notifier()` picks the WhatsApp backend when the base URL is set; `notify(session, user, kind, message)` honours each user's alert types (Settings → Notifications) and their WhatsApp number.
 - Alert kinds in use: `paused` (apply run needs a human), `interview` and `assessment` (inbox), `recruiter_question`, `daily_summary` (`jobapply summary`, scheduled 15:00 UTC).
 - Tested against a mock HTTP transport; the bridge itself is stubbed.
+
+## 10. Deployment and CI — done
+
+- `deploy/systemd/`: `jobapply-dashboard` (`jobapply serve`), `jobapply-collector` (`jobapply schedule -g collector`), `jobapply-worker` (`jobapply schedule -g worker`: score, apply, inbox, follow-ups, daily summary), `jobapply-backup.service` + nightly timer. All run as the `jobapply` user from `/opt/jobapply` with `EnvironmentFile=/opt/jobapply/.env`.
+- `deploy/deploy.sh`: idempotent Ubuntu deploy (user, uv, venv with the jobspy extra, Chromium and its deps, `.env` seeded with fresh secret and vault keys on first run, migrations, units, restart). `deploy/backup.sh`: consistent SQLite `.backup` plus `data/`, `.env` and `vault/` into a rotated tar.gz.
+- `Dockerfile` (python 3.11 slim, uv, Chromium) and `docker-compose.yml` with dashboard / collector / worker services sharing `./data`; `docker compose --profile setup run migrate` for migrations.
+- `.github/workflows/ci.yml`: uv sync, ruff, pytest with Chromium (the Playwright form tests run in CI), migrations + seed on a fresh database, Docker image build and smoke.
+- Not run here: the deploy script and the image build need a real box / Docker daemon. `bash -n` passes on both scripts.
+
+## What to do first locally
+
+1. `git pull`, `cp .env.example .env`, set `JOBAPPLY_SECRET_KEY`, `JOBAPPLY_VAULT_KEY` (`uv run jobapply vault-key`), one LLM key and `JOBAPPLY_LLM_BACKEND=live`.
+2. `uv sync --extra jobspy && uv run playwright install chromium && uv run jobapply db upgrade && uv run jobapply create-user you --admin && uv run jobapply serve`.
+3. Fill Profile and Settings (filters, sites, mailbox credentials under site `mailbox`), add target companies to `config/companies.yaml`, then `uv run jobapply collect && uv run jobapply score`.
+4. `uv run jobapply apply --dry-run -n 3`, review the Queue page screenshots, fix any selector in `config/form_profiles/` that drifted, flip a site's auto-submit on only after clean dry runs, then switch the Admin dry-run toggle off.
+5. Then the local-only items from docs/CLOUD_BUILD.md: assisted sites, Workday signup with real OTP, deploy with `deploy/deploy.sh`.

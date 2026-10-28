@@ -24,6 +24,18 @@ Collectors run once and share one jobs table. Each user has their own profile va
 
 Python 3.11 (uv), httpx, Playwright, SQLite + SQLModel, APScheduler, FastAPI + HTMX dashboard, Claude API plus OpenAI-compatible and Gemini adapters with failover, python-jobspy. Runs as systemd services on a Linux box, dashboard behind Tailscale.
 
+## Run it
+
+```bash
+uv sync --extra jobspy
+uv run playwright install chromium
+cp .env.example .env            # set JOBAPPLY_SECRET_KEY, JOBAPPLY_VAULT_KEY (uv run jobapply vault-key), LLM keys
+uv run jobapply seed            # demo admin/admin1234 and demo/demo1234 with sample data, or: jobapply db upgrade
+uv run jobapply serve           # dashboard on http://127.0.0.1:8000
+```
+
+Then `jobapply collect`, `jobapply score`, `jobapply apply --dry-run`, `jobapply inbox`, or run everything on a schedule with `jobapply schedule`. Production: `deploy/deploy.sh` installs the systemd services on an Ubuntu box; `docker compose up -d` is the container route. `JOBAPPLY_LLM_BACKEND=fake` runs the whole pipeline with a deterministic stand-in and no API calls.
+
 ## Docs
 
 - [docs/PLAN.md](docs/PLAN.md) full plan: pipeline, auto-apply layers, mailbox and OTP, multi-user design, build phases, parallel build schedule
@@ -31,3 +43,4 @@ Python 3.11 (uv), httpx, Playwright, SQLite + SQLModel, APScheduler, FastAPI + H
 - [docs/DASHBOARD.md](docs/DASHBOARD.md) page-by-page UI spec
 - [docs/FORM_PROFILES.md](docs/FORM_PROFILES.md) how ATS forms are profiled, learned and verified
 - [docs/CLOUD_BUILD.md](docs/CLOUD_BUILD.md) what to build in Claude Code on the web vs locally, with the cloud session brief
+- [docs/STATUS.md](docs/STATUS.md) what is built, what is stubbed, and what to do first locally
