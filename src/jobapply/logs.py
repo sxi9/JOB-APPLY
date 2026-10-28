@@ -69,7 +69,7 @@ def configure_logging(level: str = "INFO", json_output: bool = False) -> None:
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(level.upper())
-    for noisy in ("httpx", "httpcore", "apscheduler.executors.default"):
+    for noisy in ("httpx", "httpcore", "apscheduler.executors.default", "fontTools"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 

@@ -8,6 +8,8 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func
 from sqlmodel import select
 
+from jobapply.ai.providers import CATALOG, parse_order, provider_status, server_config
+from jobapply.config import get_settings
 from jobapply.models import Application, CollectorRun, LlmUsage, Role, User, utcnow
 from jobapply.switches import collect_interval, get_value, set_value
 from jobapply.users import create_user, hash_password
@@ -22,15 +24,53 @@ def admin_page(ctx: Ctx = Depends(admin_ctx)):
     today = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     month = utcnow() - timedelta(days=30)
     users = s.exec(select(User).order_by(User.username)).all()
-    applied = dict(s.exec(select(Application.user_id, func.count()).where(Application.submitted_at >= today)
-                          .group_by(Application.user_id)).all())
-    tokens = {uid: (i or 0) + (o or 0) for uid, i, o in s.exec(
-        select(LlmUsage.user_id, func.sum(LlmUsage.input_tokens), func.sum(LlmUsage.output_tokens))
-        .where(LlmUsage.created_at >= month).group_by(LlmUsage.user_id)).all()}
+    applied = dict(
+        s.exec(
+            select(Application.user_id, func.count())
+            .where(Application.submitted_at >= today)
+            .group_by(Application.user_id)
+        ).all()
+    )
+    tokens = {
+        uid: (i or 0) + (o or 0)
+        for uid, i, o in s.exec(
+            select(LlmUsage.user_id, func.sum(LlmUsage.input_tokens), func.sum(LlmUsage.output_tokens))
+            .where(LlmUsage.created_at >= month)
+            .group_by(LlmUsage.user_id)
+        ).all()
+    }
     runs = s.exec(select(CollectorRun).order_by(CollectorRun.started_at.desc()).limit(50)).all()
-    return ctx.render("admin.html", users=users, applied=applied, tokens=tokens, runs=runs,
-                      kill=get_value(s, "kill_switch") == "on", dry=get_value(s, "dry_run", "on") != "off",
-                      interval=collect_interval(s), roles=list(Role))
+    settings = get_settings()
+    order = parse_order(settings.llm_providers)
+    health = {h["key"].split(":")[0]: h for h in provider_status()}
+    providers = [
+        {
+            "spec": CATALOG[n],
+            "server_key": bool(server_config(n, settings).api_key),
+            "model": server_config(n, settings).model,
+            "health": health.get(n),
+        }
+        for n in order
+    ]
+    usage_by_model = s.exec(
+        select(LlmUsage.model, func.count(), func.sum(LlmUsage.input_tokens + LlmUsage.output_tokens))
+        .where(LlmUsage.created_at >= month)
+        .group_by(LlmUsage.model)
+    ).all()
+    return ctx.render(
+        "admin.html",
+        users=users,
+        applied=applied,
+        tokens=tokens,
+        runs=runs,
+        providers=providers,
+        llm_backend=settings.llm_backend,
+        usage_by_model=usage_by_model,
+        kill=get_value(s, "kill_switch") == "on",
+        dry=get_value(s, "dry_run", "on") != "off",
+        interval=collect_interval(s),
+        roles=list(Role),
+    )
 
 
 @router.post("/users")
@@ -41,8 +81,9 @@ async def add_user(request: Request, ctx: Ctx = Depends(admin_ctx)):
         flash(request, "Username and a password of at least 8 characters are required", "error")
         return RedirectResponse("/admin", status_code=303)
     try:
-        create_user(ctx.session, username, password, email=str(form.get("email") or ""),
-                    role=Role(form.get("role") or "user"))
+        create_user(
+            ctx.session, username, password, email=str(form.get("email") or ""), role=Role(form.get("role") or "user")
+        )
     except ValueError as exc:
         flash(request, str(exc), "error")
         return RedirectResponse("/admin", status_code=303)

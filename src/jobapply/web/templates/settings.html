@@ -72,8 +72,24 @@
 <form method="post" action="/settings/preferences" class="card" id="ai" style="margin-top:16px">
   <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="section" value="ai">
   <h2>AI</h2>
-  <div class="fields">
-    <div class="field"><label>Anthropic API key (leave blank to use the shared key)</label><input type="password" name="anthropic_api_key" autocomplete="off"></div>
+  {% if not live %}<p class="flash flash-ok">The server runs the fake LLM (<code>JOBAPPLY_LLM_BACKEND=fake</code>): no API calls, deterministic scores. Set it to <code>live</code> to use the providers below.</p>{% endif %}
+  <p class="muted small">Providers are tried in this order. When one is rate limited, out of credits or down, the next one takes over automatically. Your own key for a provider is used instead of the server's; a provider with no key is skipped.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Use</th><th>Provider</th><th>Model (blank = default)</th><th>Key</th><th>Your API key</th></tr></thead>
+    {% for p in providers %}
+    <tr>
+      <td><input type="checkbox" name="use__{{ p.spec.name }}" value="1" {{ 'checked' if p.enabled }}></td>
+      <td><strong>{{ p.spec.label }}</strong><div class="muted small">{{ p.spec.name }}{% if p.spec.docs %} · <a href="{{ p.spec.docs }}" target="_blank" rel="noopener">keys ↗</a>{% endif %}</div></td>
+      <td><input type="text" name="model__{{ p.spec.name }}" value="{{ p.model }}" placeholder="{{ p.default_model }}"></td>
+      <td class="small">{% if p.user_key %}<span class="chip chip-green">yours</span>{% elif p.server_key %}<span class="chip chip-blue">server</span>{% elif not p.spec.needs_key %}<span class="chip chip-gray">none needed</span>{% else %}<span class="chip chip-amber">missing</span>{% endif %}</td>
+      <td><input type="password" name="key__{{ p.spec.name }}" autocomplete="off" placeholder="{{ 'replace' if p.user_key else 'paste key' }}">
+        {% if p.user_key %}<label class="check small"><input type="checkbox" name="clear__{{ p.spec.name }}" value="1"> remove mine</label>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  <div class="fields" style="margin-top:12px">
+    <div class="field"><label>Failover order (comma separated provider names; unchecked ones are ignored)</label>
+      <input type="text" name="provider_order" value="{{ prefs.get('llm_providers', '') }}" placeholder="claude, openai, gemini, groq"></div>
     <div class="field"><label>Auto-apply score threshold (0–100)</label><input type="number" name="score_threshold" min="0" max="100" value="{{ prefs.get('score_threshold', 70) }}"></div>
     <div class="field"><label>Cover letter tone</label><select name="cover_letter_tone">
       {% for t in tones %}<option {{ 'selected' if prefs.get('cover_letter_tone', 'professional') == t }}>{{ t }}</option>{% endfor %}</select></div>
