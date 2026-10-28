@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Applications · JOB-APPLY{% endblock %}
+{% block content %}
+<div class="row spread"><h1>Applications</h1>
+  <form class="row small" method="get">
+    <select name="status" onchange="this.form.submit()">
+      <option value="">all tracked</option>
+      {% for st in statuses %}<option value="{{ st.value }}" {{ 'selected' if status == st.value }}>{{ st | label }}</option>{% endfor %}
+    </select>
+  </form>
+</div>
+<div class="card" style="padding:4px 8px">
+  <div class="table-wrap"><table>
+    <thead><tr><th>Job</th><th>Status</th><th class="hide-sm">Submitted</th><th class="hide-sm">Follow up</th><th>Updated</th></tr></thead>
+    <tbody>
+    {% for app, job in rows %}
+    <tr>
+      <td><a class="job-title" href="/applications/{{ app.id }}">{{ job.title }}</a>
+        <div class="muted small">{{ job.company }} · {{ job.ats_type or job.source }}</div></td>
+      <td><span class="chip chip-{{ app.status | status_color }}">{{ app.status | label }}</span>
+        {% if app.screenshot_path %}<span class="badge" title="screenshot stored">📷</span>{% endif %}</td>
+      <td class="hide-sm small">{{ app.submitted_at | dt if app.submitted_at else "—" }}</td>
+      <td class="hide-sm small">{{ app.follow_up_at | dt if app.follow_up_at else "—" }}</td>
+      <td class="small">{{ app.updated_at | ago }}</td>
+    </tr>
+    {% else %}<tr><td colspan="5" class="empty">No applications yet.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}

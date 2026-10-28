@@ -41,3 +41,13 @@ Run: `uv sync && uv run jobapply --help && uv run pytest`
 - Global switches (`jobapply.switches`): kill switch and dry run; env and admin toggle combine to the safe side.
 - CLI: `jobapply collect [-s source]`, `jobapply refilter`.
 - Live check: `jobapply collect -s greenhouse -s ashby -s remotive` stored 882 jobs from 900 fetched.
+
+## 5. Dashboard — done
+
+- FastAPI + Jinja2 + HTMX (vendored in `web/static/htmx.min.js`, no CDN), dark theme, phone layout, served with `jobapply serve`.
+- Login with username/password (PBKDF2), signed session cookie, CSRF on every POST, roles admin/user. Admin can "View as" any user; every page then shows that user's data with a banner.
+- Pages from DASHBOARD.md: Home (stat tiles, funnel, activity feed with screenshot thumbnails, collector health), Jobs (filters: posted within, source, score, location, remote, salary, company, status, text search; HTMX live filtering; detail with AI reason, missing skills, resume variant, Apply now / Queue / Skip / Blocklist), Queue (answers editable next to the cover letter, dry-run screenshot, Approve / Save / Reject), Applications (timeline, screenshot, answers sent, follow-up date, reply thread), Inbox (categories, AI draft reply), Profile (answers vault, skills with years, JSON Resume master, resume uploads, answer bank), Settings (filters, sites with enable/auto-submit/cap/re-login, encrypted credentials, AI, notifications), Admin (users, caps, usage, kill switch, dry-run switch, collector interval, run collectors now, collector log).
+- `jobapply seed` creates `admin / admin1234` and `demo / demo1234` with 40 demo jobs, applications in every status, mails and collector runs. No API key needed.
+- `jobapply create-user NAME [--admin]` for real users.
+- Tests render every page as user and admin, check isolation (another user's rows 404), CSRF, actions, settings and profile saves. Screenshots were reviewed at 1280px and 390px with Playwright.
+- Stubbed: Re-login button only records the request (the OTP flow is on the apply worker), inbox "send reply" and "forward" wait for the mail worker (step 8), resume variant files are generated in step 6.

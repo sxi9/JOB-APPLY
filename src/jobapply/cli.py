@@ -46,7 +46,11 @@ def apply(
 @app.command()
 def serve(host: str = typer.Option(None), port: int = typer.Option(None)) -> None:
     """Run the dashboard."""
-    log.warning("serve not implemented yet", host=host, port=port)
+    import uvicorn
+
+    settings = get_settings()
+    uvicorn.run("jobapply.web.app:create_app", factory=True, host=host or settings.host, port=port or settings.port,
+                log_level=settings.log_level.lower())
 
 
 @db_app.command("upgrade")
@@ -56,6 +60,29 @@ def db_upgrade(revision: str = "head") -> None:
 
     upgrade(revision=revision)
     log.info("database upgraded", revision=revision)
+
+
+@app.command()
+def seed() -> None:
+    """Create demo admin/user and demo jobs so the dashboard can be reviewed without API keys."""
+    from jobapply.db import get_engine, upgrade
+    from jobapply.seed import seed as _seed
+
+    upgrade()
+    log.info("seeded", **_seed(get_engine()))
+
+
+@app.command("create-user")
+def create_user_cmd(username: str, password: str = typer.Option(..., prompt=True, hide_input=True),
+                    email: str = "", admin: bool = False) -> None:
+    """Add a user from the command line."""
+    from jobapply.db import session_scope
+    from jobapply.models import Role
+    from jobapply.users import create_user
+
+    with session_scope() as session:
+        create_user(session, username, password, email=email, role=Role.admin if admin else Role.user)
+    log.info("user created", username=username, admin=admin)
 
 
 @app.command("vault-key")

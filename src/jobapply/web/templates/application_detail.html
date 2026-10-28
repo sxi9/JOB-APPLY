@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title }} · Application · JOB-APPLY{% endblock %}
+{% block content %}
+<p class="small"><a href="/applications">← Applications</a></p>
+<div class="row spread">
+  <div><h1 style="margin-bottom:4px">{{ job.title }}</h1>
+    <div class="muted">{{ job.company }} · <a href="/jobs/{{ job.id }}">job details</a> ·
+      <a href="{{ job.apply_url }}" target="_blank" rel="noopener">posting ↗</a></div></div>
+  <span class="chip chip-{{ app.status | status_color }}" style="font-size:.95rem">{{ app.status | label }}</span>
+</div>
+{% if app.error %}<div class="flash flash-error" style="margin-top:12px">{{ app.error }}</div>{% endif %}
+
+<div class="grid grid-2" style="margin-top:16px">
+  <section class="card">
+    <h2>Timeline</h2>
+    <ul class="timeline">
+      {% for e in events %}<li><strong>{{ e.kind | label }}</strong> <span class="muted small">{{ e.created_at | dt }}</span>
+        {% if e.detail %}<div class="small">{{ e.detail }}</div>{% endif %}</li>{% endfor %}
+    </ul>
+    <form method="post" action="/applications/{{ app.id }}" style="margin-top:12px">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="fields">
+        <div class="field"><label>Status</label><select name="status">
+          {% for st in statuses %}<option value="{{ st.value }}" {{ 'selected' if st == app.status }}>{{ st | label }}</option>{% endfor %}</select></div>
+        <div class="field"><label>Follow-up date</label>
+          <input type="datetime-local" name="follow_up_at" value="{{ app.follow_up_at.strftime('%Y-%m-%dT%H:%M') if app.follow_up_at else '' }}"></div>
+      </div>
+      <div class="field"><label>Note</label><input type="text" name="note" placeholder="e.g. recruiter call Tuesday"></div>
+      <button class="btn">Update</button>
+    </form>
+  </section>
+  <section class="card">
+    <h2>Submission</h2>
+    {% if app.screenshot_path %}<a href="/files/screenshot/{{ app.id }}" target="_blank"><img class="screenshot" src="/files/screenshot/{{ app.id }}" alt="submission screenshot"></a>
+    {% else %}<p class="muted small">No screenshot yet.</p>{% endif %}
+    <h3>Answers sent</h3>
+    {% for label, value in (app.answers or {}).items() %}<div class="qa"><span class="muted small">{{ label }}</span><span>{{ value }}</span></div>
+    {% else %}<p class="muted small">Nothing filled yet.</p>{% endfor %}
+    {% if app.resume_variant %}<h3>Resume variant</h3><p class="mono">{{ app.resume_variant.split('/')[-1] }}</p>{% endif %}
+    {% if app.cover_letter %}<details><summary>Cover letter</summary><div class="description">{{ app.cover_letter }}</div></details>{% endif %}
+  </section>
+</div>
+<section class="card" style="margin-top:16px">
+  <h2>Reply thread</h2>
+  {% for m in mails %}
+  <div style="padding:8px 0;border-bottom:1px solid var(--border)">
+    <div class="row"><span class="chip chip-{{ m.category | status_color }}">{{ m.category | label }}</span>
+      <a href="/inbox/{{ m.id }}"><strong>{{ m.subject or "(no subject)" }}</strong></a> <span class="muted small">{{ m.sender }} · {{ m.received_at | ago }}</span></div>
+  </div>
+  {% else %}<p class="muted small">No replies linked to this application.</p>{% endfor %}
+</section>
+{% endblock %}

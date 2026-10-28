@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Settings · JOB-APPLY{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+
+<form method="post" action="/settings/filters" class="card" id="filters">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <h2>Filters</h2>
+  <div class="fields">
+    <div class="field"><label>Roles (any must appear in the title; one per line)</label><textarea name="roles">{{ filters.roles | join('\n') }}</textarea></div>
+    <div class="field"><label>Keywords include (any, title or description)</label><textarea name="keywords_include">{{ filters.keywords_include | join('\n') }}</textarea></div>
+    <div class="field"><label>Keywords exclude (title)</label><textarea name="keywords_exclude">{{ filters.keywords_exclude | join('\n') }}</textarea></div>
+    <div class="field"><label>Locations (use <code>remote</code> for remote jobs)</label><textarea name="locations">{{ filters.locations | join('\n') }}</textarea></div>
+    <div class="field"><label>Company blocklist</label><textarea name="company_blocklist">{{ filters.company_blocklist | join('\n') }}</textarea></div>
+    <div>
+      <div class="field"><label>Salary floor (posted maximum must reach this)</label><input type="number" name="salary_floor" value="{{ filters.salary_floor or '' }}"></div>
+      <div class="field"><label>Posted within (hours)</label><input type="number" name="max_age_hours" min="1" value="{{ filters.max_age_hours }}"></div>
+      <label class="check"><input type="checkbox" name="remote_only" value="1" {{ 'checked' if filters.remote_only }}> Remote only</label>
+    </div>
+  </div>
+  <div class="field"><label>Seniority (leave all unchecked for any)</label>
+    {% for lvl in seniority_levels %}<label class="check"><input type="checkbox" name="seniority" value="{{ lvl }}" {{ 'checked' if lvl in filters.seniority }}> {{ lvl }}</label>{% endfor %}</div>
+  <button class="btn btn-primary">Save filters</button>
+</form>
+
+<form method="post" action="/settings/sites" class="card" id="sites" style="margin-top:16px">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <h2>Sites</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Site</th><th>Enabled</th><th>Auto-submit</th><th>Daily cap</th><th>Login</th></tr></thead>
+    {% for s in sites %}
+    <tr>
+      <td>{{ s.site }}</td>
+      <td><input type="checkbox" name="enabled__{{ s.site }}" value="1" {{ 'checked' if s.enabled }}></td>
+      <td><input type="checkbox" name="auto__{{ s.site }}" value="1" {{ 'checked' if s.auto_submit }}></td>
+      <td><input type="number" name="cap__{{ s.site }}" value="{{ s.daily_cap }}" min="0" style="width:80px"></td>
+      <td class="small">{% if s.login_status == 'n/a' %}<span class="muted">no login needed</span>{% else %}
+        <span class="chip chip-{{ 'green' if s.login_status == 'ok' else 'amber' if s.login_status == 'unknown' else 'red' }}">{{ s.login_status | label }}</span>
+        <button class="btn btn-sm" formaction="/settings/sites/{{ s.site }}/relogin">Re-login</button>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  <p class="muted small">Auto-submit stays off until a few dry runs on that site look right in the Queue. The global dry-run switch on the Admin page overrides everything.</p>
+  <button class="btn btn-primary">Save sites</button>
+</form>
+
+<section class="card" id="credentials" style="margin-top:16px">
+  <h2>Credentials</h2>
+  <p class="muted small">Encrypted at rest with the server vault key. Values are never shown again after saving.</p>
+  <div class="table-wrap"><table>
+    {% for c in creds %}
+    <tr><td>{{ c.site }}</td><td><span class="badge">{{ c.kind }}</span></td><td class="mono">{{ mask(c.username) or '—' }}</td>
+      <td class="mono muted">••••••••</td><td class="small muted">{{ c.updated_at | ago }}</td>
+      <td><form method="post" action="/settings/credentials/{{ c.id }}/delete"><input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="btn btn-sm btn-danger">Delete</button></form></td></tr>
+    {% else %}<tr><td class="muted small">None saved.</td></tr>{% endfor %}
+  </table></div>
+  <form method="post" action="/settings/credentials" style="margin-top:12px">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="fields">
+      <div class="field"><label>Site</label><input type="text" name="site" placeholder="linkedin, naukri, mailbox…" required></div>
+      <div class="field"><label>Kind</label><select name="kind">{% for k in credential_kinds %}<option>{{ k }}</option>{% endfor %}</select></div>
+      <div class="field"><label>Username / email</label><input type="text" name="username" autocomplete="off"></div>
+      <div class="field"><label>Password / app password</label><input type="password" name="secret" autocomplete="new-password"></div>
+      <div class="field"><label>Host (IMAP/SMTP only)</label><input type="text" name="host" placeholder="imap.gmail.com"></div>
+      <div class="field"><label>Port</label><input type="number" name="port" placeholder="993"></div>
+    </div>
+    <button class="btn">Save credential</button>
+  </form>
+</section>
+
+<form method="post" action="/settings/preferences" class="card" id="ai" style="margin-top:16px">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="section" value="ai">
+  <h2>AI</h2>
+  <div class="fields">
+    <div class="field"><label>Anthropic API key (leave blank to use the shared key)</label><input type="password" name="anthropic_api_key" autocomplete="off"></div>
+    <div class="field"><label>Auto-apply score threshold (0–100)</label><input type="number" name="score_threshold" min="0" max="100" value="{{ prefs.get('score_threshold', 70) }}"></div>
+    <div class="field"><label>Cover letter tone</label><select name="cover_letter_tone">
+      {% for t in tones %}<option {{ 'selected' if prefs.get('cover_letter_tone', 'professional') == t }}>{{ t }}</option>{% endfor %}</select></div>
+  </div>
+  <button class="btn btn-primary">Save AI settings</button>
+</form>
+
+<form method="post" action="/settings/preferences" class="card" id="notifications" style="margin-top:16px">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="section" value="notifications">
+  <h2>Notifications</h2>
+  <div class="fields">
+    <div class="field"><label>WhatsApp number (with country code)</label><input type="tel" name="whatsapp_number" value="{{ prefs.get('whatsapp_number', '') }}"></div>
+    <div class="field"><label>Forward interview invites to email</label><input type="email" name="forward_email" value="{{ prefs.get('forward_email', '') }}"></div>
+  </div>
+  <div class="field"><label>Alert types</label>
+    {% for a in alert_types %}<label class="check"><input type="checkbox" name="alert_types" value="{{ a }}" {{ 'checked' if a in prefs.get('alert_types', alert_types) }}> {{ a | label }}</label>{% endfor %}</div>
+  <button class="btn btn-primary">Save notifications</button>
+</form>
+{% endblock %}

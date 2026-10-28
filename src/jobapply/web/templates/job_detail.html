@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title }} · JOB-APPLY{% endblock %}
+{% block content %}
+<p class="small"><a href="/jobs">← Jobs</a></p>
+<div class="row spread">
+  <div><h1 style="margin-bottom:4px">{{ job.title }}</h1>
+    <div class="muted">{{ job.company }} · {{ job.location or "location n/a" }}{% if job.remote %} · remote{% endif %}
+      · posted {{ (job.posted_at or job.first_seen_at) | ago }}
+      {% set pay = job.salary_min | money(job.salary_max, job.currency) %}{% if pay %} · {{ pay }}{% endif %}</div></div>
+  {% if app %}<span class="score {{ app.score | score_class }}" style="font-size:1.3rem">{{ app.score if app.score is not none else "–" }}</span>{% endif %}
+</div>
+
+<div class="card" style="margin-top:16px">
+  <div id="job-status" class="row">{% if app %}<span class="chip chip-{{ app.status | status_color }}">{{ app.status | label }}</span>{% else %}<span class="muted small">Not in your list yet</span>{% endif %}</div>
+  <form class="row" style="margin-top:12px" hx-post="/jobs/{{ job.id }}/action" hx-target="#job-status" hx-swap="outerHTML">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="btn btn-primary" name="action" value="apply">Apply now</button>
+    <button class="btn" name="action" value="queue">Queue</button>
+    <button class="btn" name="action" value="skip">Skip</button>
+    <button class="btn btn-danger" name="action" value="blocklist">Blocklist {{ job.company }}</button>
+    {% if job.apply_url %}<a class="btn" href="{{ job.apply_url }}" target="_blank" rel="noopener">Open posting ↗</a>{% endif %}
+  </form>
+</div>
+
+<div class="grid grid-2" style="margin-top:16px">
+  <section class="card">
+    <h2>AI assessment</h2>
+    {% if app and app.score is not none %}
+      <p>{{ app.score_reason }}</p>
+      {% if app.missing_skills %}<p class="small muted">Missing skills:</p>
+        <div class="row">{% for s in app.missing_skills %}<span class="chip chip-amber">{{ s }}</span>{% endfor %}</div>{% endif %}
+    {% else %}<p class="muted">Not scored yet.</p>{% endif %}
+    <h3>Resume variant</h3>
+    {% if app and app.resume_variant %}<p class="mono">{{ app.resume_variant.split('/')[-1] }}</p>{% else %}<p class="muted small">Generated when the job is scored above your threshold.</p>{% endif %}
+    {% if app and app.cover_letter %}<details><summary>Cover letter</summary><div class="description">{{ app.cover_letter }}</div></details>{% endif %}
+  </section>
+  <section class="card">
+    <h2>Details</h2>
+    <table class="small">
+      <tr><th>ATS</th><td>{{ job.ats_type or "unknown" }}</td></tr>
+      <tr><th>Apply URL</th><td style="word-break:break-all"><a href="{{ job.apply_url }}" target="_blank" rel="noopener">{{ job.apply_url }}</a></td></tr>
+      <tr><th>Seen on</th><td>{% for s in sources %}<a class="badge" href="{{ s.url }}" target="_blank" rel="noopener">{{ s.source }}</a> {% endfor %}</td></tr>
+      <tr><th>First seen</th><td>{{ job.first_seen_at | dt }}</td></tr>
+    </table>
+    {% if events %}<h3>History</h3><ul class="timeline small">{% for e in events %}<li><strong>{{ e.kind | label }}</strong> · {{ e.created_at | ago }}<div class="muted">{{ e.detail }}</div></li>{% endfor %}</ul>{% endif %}
+  </section>
+</div>
+<section class="card" style="margin-top:16px"><h2>Description</h2><div class="description">{{ job.description or "No description." }}</div></section>
+{% endblock %}

@@ -1,0 +1,4 @@
+<section class="card" id="q-{{ app.id }}" style="margin-bottom:16px">
+  <div class="row"><span class="chip chip-{{ app.status | status_color }}">{{ app.status | label }}</span>
+    <span>{{ message }}</span> <a class="small" href="/jobs/{{ app.job_id }}">view job</a></div>
+</section>

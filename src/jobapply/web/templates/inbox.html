@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Inbox · JOB-APPLY{% endblock %}
+{% block content %}
+<div class="row spread"><h1>Inbox</h1>
+  <div class="row small">
+    <a class="btn btn-sm {{ 'btn-primary' if not category }}" href="/inbox">all</a>
+    {% for c in categories %}<a class="btn btn-sm {{ 'btn-primary' if category == c.value }}" href="/inbox?category={{ c.value }}">{{ c | label }}</a>{% endfor %}
+  </div>
+</div>
+<div class="card" style="padding:4px 8px">
+  <div class="table-wrap"><table>
+    <thead><tr><th>Category</th><th>Subject</th><th class="hide-sm">From</th><th>Received</th></tr></thead>
+    <tbody>
+    {% for m in mails %}
+    <tr>
+      <td><span class="chip chip-{{ m.category | status_color }}">{{ m.category | label }}</span></td>
+      <td><a class="job-title" href="/inbox/{{ m.id }}">{{ m.subject or "(no subject)" }}</a>
+        {% if m.forwarded %}<span class="badge">forwarded</span>{% endif %}</td>
+      <td class="hide-sm small">{{ m.sender }}</td>
+      <td class="small">{{ m.received_at | ago }}</td>
+    </tr>
+    {% else %}<tr><td colspan="4" class="empty">No mail. The mailbox reader files replies here once IMAP is configured.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}
