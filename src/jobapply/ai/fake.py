@@ -16,10 +16,45 @@ from jobapply.ai.base import LLM, AnswerResult, LLMRequest, LLMResult, ResumeVar
 
 # Tech words the fake treats as "requirements" when they show up in a posting.
 TECH = {
-    "python", "go", "golang", "java", "kotlin", "rust", "typescript", "javascript", "react", "node", "django",
-    "fastapi", "flask", "spring", "postgres", "postgresql", "mysql", "mongodb", "redis", "kafka", "rabbitmq",
-    "aws", "gcp", "azure", "kubernetes", "docker", "terraform", "airflow", "spark", "sql", "graphql", "grpc",
-    "linux", "ci/cd", "pytorch", "tensorflow", "llm", "ml", "machine learning",
+    "python",
+    "go",
+    "golang",
+    "java",
+    "kotlin",
+    "rust",
+    "typescript",
+    "javascript",
+    "react",
+    "node",
+    "django",
+    "fastapi",
+    "flask",
+    "spring",
+    "postgres",
+    "postgresql",
+    "mysql",
+    "mongodb",
+    "redis",
+    "kafka",
+    "rabbitmq",
+    "aws",
+    "gcp",
+    "azure",
+    "kubernetes",
+    "docker",
+    "terraform",
+    "airflow",
+    "spark",
+    "sql",
+    "graphql",
+    "grpc",
+    "linux",
+    "ci/cd",
+    "pytorch",
+    "tensorflow",
+    "llm",
+    "ml",
+    "machine learning",
 }
 
 
@@ -75,7 +110,8 @@ class FakeLLM(LLM):
             score += 10
         score = max(5, min(96, score))
         reason = (f"Matches {', '.join(matched)}" if matched else "Little overlap with the profile") + (
-            f"; posting also wants {', '.join(missing)}." if missing else ".")
+            f"; posting also wants {', '.join(missing)}." if missing else "."
+        )
         return ScoreResult(score=score, reason=reason, matched_skills=matched, missing_skills=missing)
 
     def _cover_letter(self, ctx: dict) -> str:
@@ -104,41 +140,137 @@ class FakeLLM(LLM):
         work = []
         for w in master.get("work", []):
             hl = sorted(w.get("highlights", []), key=lambda h: -relevance(h))[:4]
-            work.append({"name": w.get("name", ""), "position": w.get("position", ""),
-                         "startDate": w.get("startDate", ""), "endDate": w.get("endDate", ""),
-                         "summary": w.get("summary", ""), "highlights": hl})
-        edu = [{"institution": e.get("institution", ""), "area": e.get("area", ""), "studyType": e.get("studyType", ""),
-                "endDate": e.get("endDate", "")} for e in master.get("education", [])]
+            work.append(
+                {
+                    "name": w.get("name", ""),
+                    "position": w.get("position", ""),
+                    "startDate": w.get("startDate", ""),
+                    "endDate": w.get("endDate", ""),
+                    "summary": w.get("summary", ""),
+                    "highlights": hl,
+                }
+            )
+        edu = [
+            {
+                "institution": e.get("institution", ""),
+                "area": e.get("area", ""),
+                "studyType": e.get("studyType", ""),
+                "endDate": e.get("endDate", ""),
+            }
+            for e in master.get("education", [])
+        ]
         basics = master.get("basics", {})
         summary = basics.get("summary") or ctx.get("profile", {}).get("summary", "")
-        return ResumeVariant(label=job.get("title", basics.get("label", "")), summary=summary, skills=skills,
-                             work=work, education=edu)
+        return ResumeVariant(
+            label=job.get("title", basics.get("label", "")), summary=summary, skills=skills, work=work, education=edu
+        )
 
     def _answer(self, ctx: dict) -> AnswerResult:
+        result = self._answer_text(ctx)
+        options = ctx.get("options") or []
+        if options:
+            low = result.answer.strip().lower()
+            yes_no = {"yes", "no", "true", "false"}
+            for opt in options:
+                if opt.strip().lower() == low or (
+                    low in yes_no and opt.strip().lower().startswith(low[:1] if low in ("true", "false") else low)
+                ):
+                    return AnswerResult(answer=opt, confidence=result.confidence)
+            return AnswerResult(answer=options[0], confidence=25)
+        return result
+
+    def _answer_text(self, ctx: dict) -> AnswerResult:
         q, p = ctx["question"].lower(), ctx.get("profile", {})
         skills = {k.lower(): v for k, v in (p.get("skills") or {}).items()}
         for skill, years in skills.items():
             if "years" in q and skill in q:
                 return AnswerResult(answer=f"{years:g}", confidence=95)
         rules = [
-            ("notice", p.get("notice_period")), ("current ctc", p.get("current_ctc")),
-            ("current salary", p.get("current_ctc")), ("expected", p.get("expected_ctc")),
-            ("authori", p.get("work_authorization")), ("relocat", p.get("willing_to_relocate")),
-            ("sponsor", p.get("needs_sponsorship")), ("linkedin", p.get("linkedin")), ("github", p.get("github")),
-            ("years of experience", p.get("years_experience")), ("phone", p.get("phone")),
+            ("notice", p.get("notice_period")),
+            ("current ctc", p.get("current_ctc")),
+            ("current salary", p.get("current_ctc")),
+            ("expected", p.get("expected_ctc")),
+            ("authori", p.get("work_authorization")),
+            ("relocat", p.get("willing_to_relocate")),
+            ("sponsor", p.get("needs_sponsorship")),
+            ("linkedin", p.get("linkedin")),
+            ("github", p.get("github")),
+            ("years of experience", p.get("years_experience")),
+            ("phone", p.get("phone")),
         ]
         for needle, value in rules:
             if needle in q and value:
                 return AnswerResult(answer=str(value), confidence=90)
         return AnswerResult(answer="I would be glad to discuss this in a conversation.", confidence=30)
 
+    def _form_map(self, ctx: dict):
+        from jobapply.forms.mapper import FieldMapping, FormMapping
+
+        rules = [
+            (("first name", "given name"), "profile.first_name"),
+            (("last name", "family name", "surname"), "profile.last_name"),
+            (("full name", "legal name", "your name"), "derived.full_name"),
+            (("email",), "profile.email"),
+            (("phone",), "profile.phone"),
+            (("linkedin",), "profile.linkedin"),
+            (("github",), "profile.github"),
+            (("portfolio", "website"), "profile.portfolio"),
+            (("current company", "employer"), "profile.current_company"),
+            (("location", "city", "country of residence"), "profile.location"),
+            (("sponsorship", "visa"), "derived.needs_sponsorship"),
+            (("relocat",), "derived.willing_to_relocate"),
+            (("notice period",), "profile.notice_period"),
+            (("current ctc", "current salary"), "profile.current_ctc"),
+            (("expected ctc", "expected salary"), "profile.expected_ctc"),
+            (("authorized to work", "right to work", "work authorization"), "profile.work_authorization"),
+            (("gender",), "profile.gender"),
+            (("veteran",), "profile.veteran_status"),
+            (("disability",), "profile.disability_status"),
+            (("cover letter",), "derived.cover_letter"),
+            (("privacy", "consent to the processing", "terms", "i agree", "certify"), "const:Yes"),
+        ]
+        out = []
+        for f in ctx.get("fields", []):
+            text = f"{f.get('group', '')} {f.get('label', '')} {f.get('name', '')}".lower()
+            ftype = f.get("type", "text")
+            if "recaptcha" in text or "captcha" in text or ftype in ("search", "password"):
+                out.append(FieldMapping(idx=f["idx"], key="skip", confidence=95))
+                continue
+            if any(w in text for w in ("secret", "puzzle", "decode", "video", "not a bot")):
+                out.append(
+                    FieldMapping(
+                        idx=f["idx"], key="skip", confidence=90, needs_human=True, note="anti-bot or manual task"
+                    )
+                )
+                continue
+            if ftype == "file":
+                key = "skip" if "cover" in text else "derived.resume_path"
+                out.append(FieldMapping(idx=f["idx"], key=key, confidence=90))
+                continue
+            if any(w in text for w in ("sms", "whatsapp", "newsletter", "marketing", "hispanic")):
+                out.append(FieldMapping(idx=f["idx"], key="skip", confidence=85))
+                continue
+            for needles, key in rules:
+                if any(n in text for n in needles):
+                    out.append(FieldMapping(idx=f["idx"], key=key, confidence=88))
+                    break
+            else:
+                q = (f.get("group") or f.get("label") or "").strip()
+                if q and ftype in ("text", "textarea", "select", "radio", "checkbox", "number"):
+                    out.append(FieldMapping(idx=f["idx"], key=f"answers.{q[:80]}", confidence=70))
+                else:
+                    out.append(FieldMapping(idx=f["idx"], key="skip", confidence=50))
+        return FormMapping(mappings=out)
+
     def _classify(self, ctx: dict) -> str:
         text = f"{ctx.get('subject', '')} {ctx.get('body', '')}".lower()
-        for cat, needles in [("interview", ["interview", "call with", "schedule a"]),
-                             ("assessment", ["assessment", "take-home", "coding test", "hackerrank"]),
-                             ("rejection", ["not moving forward", "other candidates", "unfortunately", "regret"]),
-                             ("verification", ["verify", "verification", "confirm your email", "otp", "one-time"]),
-                             ("recruiter_question", ["could you", "please share", "what is your", "?"])]:
+        for cat, needles in [
+            ("interview", ["interview", "call with", "schedule a"]),
+            ("assessment", ["assessment", "take-home", "coding test", "hackerrank"]),
+            ("rejection", ["not moving forward", "other candidates", "unfortunately", "regret"]),
+            ("verification", ["verify", "verification", "confirm your email", "otp", "one-time"]),
+            ("recruiter_question", ["could you", "please share", "what is your", "?"]),
+        ]:
             if any(n in text for n in needles):
                 return cat
         return "other"

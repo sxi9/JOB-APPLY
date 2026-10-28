@@ -1,0 +1,26 @@
+# Lever (jobs.lever.co/<company>/<id>/apply). Selectors recorded from a live form on 2026-10-28.
+# Custom questions live in cards[<uuid>][fieldN] inputs and are mapped by label.
+ats: lever
+detect: "jobs\\.(eu\\.)?lever\\.co/[^/]+/[0-9a-f-]{36}"
+steps:
+  - click: "a.postings-btn:has-text('Apply for this job'), a:has-text('Apply for this job')"
+    optional: true
+fields:
+  "input[name=name]": derived.full_name
+  "input[name=email]": profile.email
+  "input[name=phone]": profile.phone
+  "input[name=location]": profile.location
+  "input[name=org]": profile.current_company
+  "input[name=\"urls[LinkedIn]\"]": profile.linkedin
+  "input[name=\"urls[GitHub]\"]": profile.github
+  "input[name=\"urls[Portfolio]\"]": profile.portfolio
+  "input[name=\"urls[Other]\"]": skip
+  "input[name=resume]": derived.resume_path
+  "textarea[name=comments]": derived.cover_letter
+  "label=consent": const:Yes
+submit: "#btn-submit"
+success:
+  - "text=Application submitted"
+  - ".application-confirmation"
+never:
+  - "input[name=cards][type=hidden]"

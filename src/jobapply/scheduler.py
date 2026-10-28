@@ -28,6 +28,13 @@ def task_score() -> None:
     log.info("scheduled score", results=score_all())
 
 
+def task_apply() -> None:
+    from jobapply.pipeline.apply import apply_all
+
+    # Real submits happen only when the global dry-run switch is off AND the user's site has auto-submit on.
+    log.info("scheduled apply", users=len(apply_all(limit=5, dry_run=False)))
+
+
 @dataclass
 class Task:
     name: str
@@ -48,6 +55,7 @@ def _collect_trigger() -> IntervalTrigger:
 TASKS: list[Task] = [
     Task("collect", task_collect, _collect_trigger, "collector"),
     Task("score", task_score, _every(15), "worker"),
+    Task("apply", task_apply, _every(30), "worker"),
 ]
 
 

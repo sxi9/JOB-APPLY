@@ -1,0 +1,25 @@
+# Workable (apply.workable.com/j/<code>/apply). Field names from Workable's standard application form;
+# NOT verified against a live page from the cloud sandbox (the site rate-limits with a captcha). Review the
+# first dry-run screenshot locally.
+ats: workable
+detect: "apply\\.workable\\.com/(j/|[^/]+/j/)"
+steps:
+  - click: "button:has-text('Accept all'), button[data-ui='cookie-consent-accept']"
+    optional: true
+fields:
+  "input[name=firstname]": profile.first_name
+  "input[name=lastname]": profile.last_name
+  "input[name=email]": profile.email
+  "input[name=phone]": profile.phone
+  "input[name=address]": profile.location
+  "input[name=resume]": derived.resume_path
+  "input[name=headline]": profile.current_title
+  "textarea[name=summary]": profile.summary
+  "textarea[name=cover_letter]": derived.cover_letter
+  "input[name=linkedin]": profile.linkedin
+  "label=consent": const:Yes
+  "label=privacy": const:Yes
+submit: "button[data-ui=submit-application], button[type=submit]"
+success:
+  - "text=Thank you for applying"
+  - "text=Your application has been submitted"

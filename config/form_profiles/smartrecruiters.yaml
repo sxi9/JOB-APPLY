@@ -1,0 +1,21 @@
+# SmartRecruiters one-click apply (jobs.smartrecruiters.com/oneclick-ui/...). Field names from the
+# standard apply form; NOT verified against a live page from the cloud sandbox (captcha-gated). Review the
+# first dry-run screenshot locally.
+ats: smartrecruiters
+detect: "jobs\\.smartrecruiters\\.com/"
+steps:
+  - click: "a:has-text(\"I'm interested\"), button:has-text(\"I'm interested\"), button:has-text('Apply')"
+    optional: true
+fields:
+  "input[name=firstName]": profile.first_name
+  "input[name=lastName]": profile.last_name
+  "input[name=email]": profile.email
+  "input[name=phoneNumber]": profile.phone
+  "input[name=location]": profile.location
+  "input[name=resume]": derived.resume_path
+  "input[name=linkedin]": profile.linkedin
+  "label=privacy": const:Yes
+submit: "button[type=submit]"
+success:
+  - "text=Thank you"
+  - "text=Application received"

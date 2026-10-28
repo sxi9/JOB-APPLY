@@ -42,8 +42,14 @@ def apply(
     user: str = typer.Option(None, "--user", "-u"),
     limit: int = typer.Option(5, "--limit", "-n"),
 ) -> None:
-    """Apply to queued jobs."""
-    log.warning("apply not implemented yet", dry_run=dry_run, user=user, limit=limit)
+    """Fill application forms for approved and queued jobs. Dry run never submits."""
+    from jobapply.pipeline.apply import apply_all
+
+    results = apply_all(user, limit=limit, dry_run=dry_run)
+    for name, outcomes in results.items():
+        for o in outcomes:
+            log.info("applied", user=name, application=o["app_id"], status=o["status"], detail=o["detail"])
+    log.info("apply finished", dry_run=dry_run, users=len(results), applications=sum(map(len, results.values())))
 
 
 @app.command()

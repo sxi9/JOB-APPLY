@@ -141,7 +141,7 @@ def ensure_resume_variant(session: Session, llm: LLM, user: User, job: Job, forc
 
 
 def answer_question(session: Session, llm: LLM, user: User, question: str, job: Job | None = None,
-                    use_bank: bool = True) -> AnswerResult:
+                    use_bank: bool = True, options: list[str] | None = None) -> AnswerResult:
     """Answer bank first; otherwise ask the LLM and store the draft for the user to approve."""
     qh = question_hash(question)
     if use_bank:
@@ -152,13 +152,16 @@ def answer_question(session: Session, llm: LLM, user: User, question: str, job: 
     bank = session.exec(select(AnswerBank).where(AnswerBank.user_id == user.id, AnswerBank.approved)).all()
     bank_text = "\n".join(f"- {b.question} -> {b.answer}" for b in bank[:60]) or "(empty)"
     prompt = f"Question: {question}"
+    if options:
+        prompt += "\nAnswer with exactly one of these options, verbatim: " + " | ".join(options[:60])
     if job is not None:
         prompt += f"\n\nThe form belongs to this posting:\n{prompts.job_text(job, 3000)}"
     req = LLMRequest(
         task="answer", schema=AnswerResult, max_tokens=2048,
         system=prompts.ANSWER_SYSTEM.format(profile=prompts.profile_text(user), answers=bank_text),
         prompt=prompt,
-        context={"profile": _profile_ctx(user), "question": question, "job": _job_ctx(job) if job else {}},
+        context={"profile": _profile_ctx(user), "question": question, "options": options or [],
+                 "job": _job_ctx(job) if job else {}},
     )
     result = run(session, llm, user, req).as_(AnswerResult)
     result.confidence = max(0, min(100, int(result.confidence)))
