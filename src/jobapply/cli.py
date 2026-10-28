@@ -8,6 +8,8 @@ from jobapply.config import get_settings
 from jobapply.logs import configure_logging, get_logger
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
+db_app = typer.Typer(no_args_is_help=True, help="Database commands")
+app.add_typer(db_app, name="db")
 log = get_logger("jobapply.cli")
 
 
@@ -43,3 +45,20 @@ def apply(
 def serve(host: str = typer.Option(None), port: int = typer.Option(None)) -> None:
     """Run the dashboard."""
     log.warning("serve not implemented yet", host=host, port=port)
+
+
+@db_app.command("upgrade")
+def db_upgrade(revision: str = "head") -> None:
+    """Apply Alembic migrations."""
+    from jobapply.db import upgrade
+
+    upgrade(revision=revision)
+    log.info("database upgraded", revision=revision)
+
+
+@app.command("vault-key")
+def vault_key() -> None:
+    """Print a new credential vault key for JOBAPPLY_VAULT_KEY."""
+    from jobapply.vault import generate_key
+
+    typer.echo(generate_key())
