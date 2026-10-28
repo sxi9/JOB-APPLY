@@ -47,6 +47,12 @@ def task_follow_ups() -> None:
     log.info("scheduled follow-ups", results=follow_ups_all())
 
 
+def task_daily_summary() -> None:
+    from jobapply.pipeline.summary import send_summaries
+
+    log.info("scheduled summary", results=send_summaries())
+
+
 @dataclass
 class Task:
     name: str
@@ -70,6 +76,7 @@ TASKS: list[Task] = [
     Task("apply", task_apply, _every(30), "worker"),
     Task("inbox", task_inbox, _every(10), "worker"),
     Task("follow_ups", task_follow_ups, lambda: CronTrigger(hour=9, minute=30), "worker"),
+    Task("daily_summary", task_daily_summary, lambda: CronTrigger(hour=15, minute=0), "worker"),
 ]
 
 
