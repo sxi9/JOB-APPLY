@@ -56,3 +56,4 @@ ignore = ["B008"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/jobapply/migrations/versions/*" = ["E501"]
+"src/jobapply/forms/fields.py" = ["E501"]  # embedded JavaScript

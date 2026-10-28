@@ -1,0 +1,30 @@
+# Greenhouse hosted boards (job-boards.greenhouse.io, boards.greenhouse.io). Selectors recorded from a live
+# form on 2026-10-28. Custom questions carry generated ids (question_<n>) and are mapped by label.
+ats: greenhouse
+detect: "(job-boards|boards)(\\.eu)?\\.greenhouse\\.io/[^/]+/jobs/\\d+"
+steps:
+  - click: "button:has-text('Accept all'), button:has-text('Accept All Cookies')"
+    optional: true
+fields:
+  "#first_name": profile.first_name
+  "#last_name": profile.last_name
+  "#email": profile.email
+  "#phone": profile.phone
+  "#country": profile.location
+  "#resume": derived.resume_path
+  "#cover_letter": skip            # file upload for a letter; the text version goes in a question when asked
+  "label=LinkedIn Profile": profile.linkedin
+  "label=GitHub": profile.github
+  "label=current country of residence": profile.location
+  "label=require sponsorship": derived.needs_sponsorship
+  "label=Gender": profile.gender
+  "label=Veteran Status": profile.veteran_status
+  "label=Disability Status": profile.disability_status
+  "label=Hispanic/Latino": skip
+submit: "button[type=submit]"
+success:
+  - "text=Thank you for applying"
+  - "#application_confirmation"
+never:
+  - "textarea[name=g-recaptcha-response]"
+  - "input[type=search]"
