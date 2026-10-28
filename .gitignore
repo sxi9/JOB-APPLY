@@ -1,0 +1,9 @@
+.env
+*.db
+*.sqlite
+vault/
+browser-profiles/
+resumes/
+screenshots/
+__pycache__/
+.venv/
