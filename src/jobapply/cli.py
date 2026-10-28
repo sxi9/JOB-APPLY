@@ -21,15 +21,10 @@ def _setup(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
 
 @app.command()
 def collect(source: list[str] = typer.Option(None, "--source", "-s", help="Only these sources")) -> None:
-    """Run collectors once and store new jobs."""
-    from jobapply.collectors.registry import build_collectors
+    """Run collectors once, store new jobs and assign them to users."""
+    from jobapply.pipeline.collect import run_all
 
-    for c in build_collectors(only=source or None):
-        try:
-            jobs = c.collect()
-            log.info("collected", collector=c.key, count=len(jobs))
-        except Exception as exc:
-            log.error("collector failed", collector=c.key, error=str(exc))
+    log.info("collect finished", **run_all(only=source or None))
 
 
 @app.command()
@@ -80,3 +75,23 @@ def detect_companies_cmd() -> None:
     companies = load_companies(path)
     if detect_companies(companies):
         save_companies(path, companies)
+
+
+@app.command()
+def refilter() -> None:
+    """Re-run every user's filters over recent jobs (after filters change)."""
+    from jobapply.db import session_scope
+    from jobapply.pipeline.filters import assign_jobs
+
+    with session_scope() as session:
+        log.info("refilter finished", assigned=assign_jobs(session, None))
+
+
+@app.command()
+def schedule(group: list[str] = typer.Option(None, "--group", "-g", help="collector and/or worker")) -> None:
+    """Run the scheduler in the foreground."""
+    from jobapply.scheduler import build_scheduler
+
+    sched = build_scheduler(group or None)
+    log.info("scheduler starting", jobs=[j.id for j in sched.get_jobs()])
+    sched.start()
