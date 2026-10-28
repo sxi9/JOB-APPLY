@@ -246,3 +246,24 @@ def test_admin_switches_and_users(client, engine):
 def test_seed_is_idempotent(engine):
     assert "admin" in seed(engine)
     assert seed(engine) == {"status": "already seeded"}
+
+
+def test_inbox_send_and_forward_need_mailbox(client, engine):
+    _, csrf = login(client, "demo", "demo1234")
+    with Session(engine) as s:
+        from jobapply.models import MailMessage
+
+        mail = s.exec(select(MailMessage).where(MailMessage.category == "interview")).first()
+    page = client.get(f"/inbox/{mail.id}").text
+    assert "Send reply" in page and "disabled" in page  # no SMTP credentials saved yet
+    resp = client.post(f"/inbox/{mail.id}/send", data={"csrf": csrf, "draft_reply": "Thanks"})
+    assert resp.status_code == 303
+    assert "SMTP credentials" in client.get(f"/inbox/{mail.id}").text
+    resp = client.post(f"/inbox/{mail.id}/forward", data={"csrf": csrf})
+    assert resp.status_code == 303
+    assert "forward address" in client.get(f"/inbox/{mail.id}").text
+    # a draft can still be saved
+    resp = client.post(f"/inbox/{mail.id}", data={"csrf": csrf, "draft_reply": "Edited", "category": "interview"})
+    assert resp.status_code == 303
+    with Session(engine) as s:
+        assert s.get(MailMessage, mail.id).draft_reply == "Edited"

@@ -35,6 +35,18 @@ def task_apply() -> None:
     log.info("scheduled apply", users=len(apply_all(limit=5, dry_run=False)))
 
 
+def task_inbox() -> None:
+    from jobapply.pipeline.mail import sync_all
+
+    log.info("scheduled inbox", results=sync_all())
+
+
+def task_follow_ups() -> None:
+    from jobapply.pipeline.mail import follow_ups_all
+
+    log.info("scheduled follow-ups", results=follow_ups_all())
+
+
 @dataclass
 class Task:
     name: str
@@ -56,6 +68,8 @@ TASKS: list[Task] = [
     Task("collect", task_collect, _collect_trigger, "collector"),
     Task("score", task_score, _every(15), "worker"),
     Task("apply", task_apply, _every(30), "worker"),
+    Task("inbox", task_inbox, _every(10), "worker"),
+    Task("follow_ups", task_follow_ups, lambda: CronTrigger(hour=9, minute=30), "worker"),
 ]
 
 

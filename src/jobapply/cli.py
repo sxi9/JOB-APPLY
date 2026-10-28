@@ -102,6 +102,22 @@ def vault_key() -> None:
     typer.echo(generate_key())
 
 
+@app.command()
+def inbox(user: str = typer.Option(None, "--user", "-u"), limit: int = typer.Option(100, "--limit", "-n")) -> None:
+    """Read each user's mailbox: classify replies, update applications, draft answers, forward invites."""
+    from jobapply.pipeline.mail import sync_all
+
+    log.info("inbox finished", results=sync_all(user, limit=limit))
+
+
+@app.command("follow-ups")
+def follow_ups(user: str = typer.Option(None, "--user", "-u")) -> None:
+    """Send due follow-ups to recruiters who replied; remind the user about the rest."""
+    from jobapply.pipeline.mail import follow_ups_all
+
+    log.info("follow-ups finished", results=follow_ups_all(user))
+
+
 @app.command("detect-companies")
 def detect_companies_cmd() -> None:
     """Fill in ats and slug in config/companies.yaml from each careers_url."""

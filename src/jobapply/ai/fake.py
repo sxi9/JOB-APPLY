@@ -262,15 +262,35 @@ class FakeLLM(LLM):
                     out.append(FieldMapping(idx=f["idx"], key="skip", confidence=50))
         return FormMapping(mappings=out)
 
-    def _classify(self, ctx: dict) -> str:
+    def _classify(self, ctx: dict):
+        from jobapply.mail.classify import MailClassification
+
         text = f"{ctx.get('subject', '')} {ctx.get('body', '')}".lower()
+        category = ctx.get("hint") or "other"
         for cat, needles in [
-            ("interview", ["interview", "call with", "schedule a"]),
+            ("interview", ["interview", "call with", "schedule a", "book a time"]),
             ("assessment", ["assessment", "take-home", "coding test", "hackerrank"]),
             ("rejection", ["not moving forward", "other candidates", "unfortunately", "regret"]),
-            ("verification", ["verify", "verification", "confirm your email", "otp", "one-time"]),
-            ("recruiter_question", ["could you", "please share", "what is your", "?"]),
+            ("recruiter_question", ["could you", "please share", "what is your", "let us know"]),
         ]:
             if any(n in text for n in needles):
-                return cat
-        return "other"
+                category = cat
+                break
+        needs_reply = category in ("interview", "assessment", "recruiter_question")
+        p = ctx.get("profile") or {}
+        name = f"{p.get('first_name', '')} {p.get('last_name', '')}".strip() or "Candidate"
+        draft = ""
+        if needs_reply:
+            draft = (
+                "Hi,\n\nThank you for getting back to me. "
+                + {
+                    "interview": "The proposed time works for me and I look forward to the conversation.",
+                    "assessment": "I will complete the assessment within the given window.",
+                    "recruiter_question": f"My notice period is {p.get('notice_period', '30 days')} and my expected "
+                    f"compensation is {p.get('expected_ctc', 'open to discussion')}.",
+                }[category]
+                + f"\n\nBest regards,\n{name}"
+            )
+        return MailClassification(
+            category=category, needs_reply=needs_reply, draft_reply=draft, summary=ctx.get("subject", "")[:80]
+        )
