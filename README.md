@@ -28,3 +28,4 @@ Python 3.11 (uv), httpx, Playwright, SQLite + SQLModel, APScheduler, FastAPI + H
 - [docs/SOURCES.md](docs/SOURCES.md) source-by-source table with access method and apply method
 - [docs/DASHBOARD.md](docs/DASHBOARD.md) page-by-page UI spec
 - [docs/FORM_PROFILES.md](docs/FORM_PROFILES.md) how ATS forms are profiled, learned and verified
+- [docs/CLOUD_BUILD.md](docs/CLOUD_BUILD.md) what to build in Claude Code on the web vs locally, with the cloud session brief
