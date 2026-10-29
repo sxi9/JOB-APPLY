@@ -61,6 +61,24 @@ SHOWN_JS = r"""
 }
 """
 
+# Dry-run safety net: swallows every `submit` event (a stray Enter in a text input, an "Apply" button that is
+# the form's submit control) until `_submit` lifts the guard. Installed per page, re-run on every navigation.
+SUBMIT_GUARD_JS = r"""
+() => {
+  if (window.__jobapplyGuard) return;
+  window.__jobapplyGuard = true;
+  document.addEventListener('submit', (e) => {
+    if (window.__jobapplyAllowSubmit) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }, true);
+}
+"""
+
+# Menu rows that are not options: React-Select's notices, Google Places' footer.
+OPTION_NOTICES = {"no options", "no results", "no results found", "loading...", "loading", "type to search",
+                  "start typing", "powered by google"}
+
 
 @dataclass
 class PlannedFill:
@@ -235,6 +253,11 @@ class FormRunner:
                     continue
                 plan.append(PlannedFill(f, key, rv.value, rv.kind, source))
                 used.add(f.idx)
+                if rv.kind == "file":
+                    # A file value fills one input only: a broad selector (e.g. `input[type=file]`, used when
+                    # the resume dropzone has a generated name) must not copy the resume into every file input
+                    # on the page (a separate portfolio / cover-letter attachment slot).
+                    break
         return plan
 
     def fill_questions(
@@ -299,7 +322,9 @@ class FormRunner:
             o = opt.strip().lower()
             if o == want:
                 return opt
-            s = fuzz.partial_ratio(want, o) if len(want) > 2 else 0
+            # partial_ratio against a 2-3 letter option is 100 for any value containing it ("Unknown" -> "No"):
+            # short options only match whole.
+            s = fuzz.partial_ratio(want, o) if len(want) > 2 and len(o) >= 4 else 0
             if s > score:
                 best, score = opt, s
         return best if score >= 80 else None
@@ -331,7 +356,8 @@ class FormRunner:
             best, score = None, (0, 0)
             for o, lo in lowered:
                 s = fuzz.ratio(needle, lo)
-                if len(needle) >= 4:
+                if len(needle) >= 4 and len(lo) >= 4:
+                    # Never partial-match a 2-3 letter option: "Unknown" / "I don't know" contain "no".
                     s = max(s, fuzz.partial_ratio(needle, lo))
                 if (s, -len(lo)) > score:
                     best, score = o, (s, -len(lo))
@@ -384,14 +410,16 @@ class FormRunner:
             self._choose(page, f, loc, options, guess)
             p.value = self._verify_shown(page, f, loc, guess, text)
             return ""
-        loc.press("ArrowDown")
-        loc.press("Enter")
-        page.wait_for_timeout(300)
-        shown = self._shown_value(page, f)
-        if not shown or shown.strip().lower() == text.lower():
+        # Commit the first suggestion by clicking it (ArrowDown+Enter would move React-Select's focus from the
+        # already focused first row to the second, and Enter on a closed menu submits the form).
+        first = next(o for o in options if o)
+        try:
+            self._choose(page, f, loc, options, first)
+            shown = self._verify_shown(page, f, loc, first, text)
+        except ValueError:
             self._clear_text(loc)
             self._close(loc)
-            raise ValueError(f"no suggestion matches {text!r}")
+            raise ValueError(f"no suggestion matches {text!r}") from None
         p.value = shown
         return f"picked the first suggestion {shown!r} for {text!r}, review it"
 
@@ -413,8 +441,39 @@ class FormRunner:
 
     @staticmethod
     def _clear_text(loc) -> None:
-        loc.press("Control+a")
+        """Select-all (Control on Windows/Linux, Meta on macOS) and delete. Nothing is pressed on an empty
+        input: Backspace there removes a React-Select value that is already chosen."""
+        try:
+            if not loc.input_value(timeout=1000):
+                return
+        except Exception:  # noqa: BLE001 - not a text input; clear anyway
+            pass
+        loc.press("ControlOrMeta+a")
         loc.press("Backspace")
+
+    @staticmethod
+    def _menu_open(loc) -> bool:
+        try:
+            return loc.get_attribute("aria-expanded", timeout=1000) == "true"
+        except Exception:  # noqa: BLE001 - detached input
+            return False
+
+    def _enter_commits(self, page, f: FormField, loc) -> bool:
+        """True only when Enter would choose a focused option: the menu is open and a row is focused. On a
+        closed menu (or one without focus) Enter is the browser's implicit form submission."""
+        if not self._menu_open(loc):
+            return False
+        opts = self._options_locator(page, f, loc)
+        if opts is None:
+            return False
+        try:
+            focused = opts.and_(page.locator(
+                '[aria-selected="true"], [class*="focused"], [class*="selected"], [class*="highlight"], '
+                '[class*="active"]'
+            ))
+            return focused.count() > 0
+        except Exception:  # noqa: BLE001 - menu re-rendered under us
+            return False
 
     @staticmethod
     def _close(loc) -> None:
@@ -423,36 +482,52 @@ class FormRunner:
         except Exception:  # noqa: BLE001 - best effort
             pass
 
+    # Rows of an open menu that can be chosen. Menu notices (React-Select's `__menu-notice--no-options`),
+    # disabled rows and list items that are links (a site nav mistaken for a menu) are not options.
+    OPTION_ROWS = '[role=option]:not([aria-disabled="true"])'
+    OPTION_ROWS_FALLBACK = (
+        'li:not(:has(a)), [class*="option"]:not([class*="notice"]):not([class*="no-options"]):not([role=listbox]), '
+        '.pac-item'
+    )
+
     def _options_locator(self, page, f: FormField, loc):
         """The option elements of the open menu that belongs to this input, or None while it is closed.
-        aria-controls / aria-owns first, then React-Select's `react-select-<id>-listbox`, then any visible
-        listbox (hidden ones, like a phone widget's country list, are skipped)."""
+        aria-controls / aria-owns first, then React-Select's `react-select-<id>-listbox`. Any other visible
+        listbox is only trusted while the input reports its menu open (aria-expanded), so a site's nav menu
+        or another widget's open list is never read as this field's options."""
         try:
             ctl = loc.get_attribute("aria-controls") or loc.get_attribute("aria-owns") or f.controls
+            expanded = loc.get_attribute("aria-expanded")
         except Exception:  # noqa: BLE001 - detached input
-            ctl = f.controls
+            ctl, expanded = f.controls, None
         candidates = []
         if ctl:
             candidates.append(page.locator(f'[id="{ctl}"]'))
         if f.id:
             candidates.append(page.locator(f'[id="react-select-{f.id}-listbox"]'))
-        candidates += [
-            page.locator('[id$="-listbox"]:visible'),
-            page.locator("[role=listbox]:visible"),
-            page.locator('[class*="menu-list"]:visible, [class*="__menu"]:visible, .pac-container:visible'),
-        ]
+        if expanded != "false":
+            candidates += [
+                page.locator('[id$="-listbox"]:visible'),
+                page.locator("[role=listbox]:visible"),
+                page.locator('[class*="menu-list"]:visible, .pac-container:visible'),
+            ]
         for cand in candidates:
             try:
                 if not cand.count() or not cand.first.is_visible():
                     continue
-                opts = cand.first.locator("[role=option]")
+                opts = cand.first.locator(self.OPTION_ROWS)
                 if not opts.count():
-                    opts = cand.first.locator('li, [class*="option"], .pac-item')
+                    opts = cand.first.locator(self.OPTION_ROWS_FALLBACK)
                 if opts.count():
                     return opts
             except Exception:  # noqa: BLE001 - menu re-rendered under us; poll again
                 continue
         return None
+
+    @staticmethod
+    def _real_options(texts: list[str]) -> bool:
+        """False for an empty list or one made only of notices ("No options", "Loading...")."""
+        return any(t and t.lower() not in OPTION_NOTICES for t in texts)
 
     def _wait_options(self, page, f: FormField, loc, wait_ms: int | None = None) -> list[str]:
         """Option texts (in menu order, empty strings kept so indexes line up) within `wait_ms`."""
@@ -464,32 +539,44 @@ class FormRunner:
                     texts = [t.strip() for t in opts.all_inner_texts()]
                 except Exception:  # noqa: BLE001 - menu re-rendered under us
                     texts = []
-                if any(texts):
+                if self._real_options(texts):
                     return texts
             if time.monotonic() >= deadline:
                 return []
             page.wait_for_timeout(self.LISTBOX_POLL_MS)
 
     def _choose(self, page, f: FormField, loc, options: list[str], pick: str) -> None:
+        """Click the option whose text is `pick`, located by text on the live menu (an async autocomplete may
+        have re-ordered its rows since they were read); the index it had is only a fallback. The keyboard is
+        used when the click fails, and Enter only while the menu is open with a focused row."""
         idx = options.index(pick)
         opts = self._options_locator(page, f, loc)
         try:
-            if opts is not None and opts.count() > idx:
-                target = opts.nth(idx)
-                target.scroll_into_view_if_needed(timeout=1000)
-                target.click(timeout=2000)
-                return
+            if opts is not None:
+                live = [t.strip() for t in opts.all_inner_texts()]
+                if pick.strip() in live:
+                    idx = live.index(pick.strip())
+                elif live != [o.strip() for o in options]:
+                    log.debug("menu changed before the click", selector=f.selector, pick=pick)
+                if opts.count() > idx:
+                    target = opts.nth(idx)
+                    target.scroll_into_view_if_needed(timeout=1000)
+                    target.click(timeout=2000)
+                    return
         except Exception as exc:  # noqa: BLE001 - menu closed or option not clickable: use the keyboard
             log.debug("option click failed", selector=f.selector, error=str(exc)[:120])
+        if not self._menu_open(loc):
+            return
         for _ in range(idx):
-            loc.press("ArrowDown")
-        loc.press("Enter")
+            loc.press("ArrowDown", timeout=1000)
+        if self._enter_commits(page, f, loc):
+            loc.press("Enter", timeout=1000)
 
     def _verify_shown(self, page, f: FormField, loc, pick: str, typed: str) -> str:
         page.wait_for_timeout(200)
         shown = self._shown_value(page, f)
-        if not self._shows(shown, pick, typed):
-            loc.press("Enter")  # the click missed a re-rendered menu: Enter commits the focused option
+        if not self._shows(shown, pick, typed) and self._enter_commits(page, f, loc):
+            loc.press("Enter", timeout=1000)  # the click missed a re-rendered menu: Enter commits the focused row
             page.wait_for_timeout(200)
             shown = self._shown_value(page, f)
         if not self._shows(shown, pick, typed):
@@ -499,12 +586,20 @@ class FormRunner:
 
     @staticmethod
     def _shows(shown: str, pick: str, typed: str) -> bool:
+        """Does the control show the picked option? Equal, or one contains the other as whole words (never for
+        a pick shorter than 4 characters: "No" is in "Norway"), or near-equal by fuzzy ratio."""
         s, k = shown.strip().lower(), pick.strip().lower()
         if not s:
             return False
         if s == typed.strip().lower() and k != s:
             return False  # the input only echoes what we typed; nothing was selected
-        return k == s or k in s or s in k or fuzz.ratio(s, k) >= FormRunner.FUZZY_MIN
+        if k == s:
+            return True
+        if len(k) >= 4:
+            whole = lambda part, text: re.search(rf"(?<!\w){re.escape(part)}(?!\w)", text) is not None  # noqa: E731
+            if whole(k, s) or whole(s, k):
+                return True
+        return fuzz.ratio(s, k) >= FormRunner.FUZZY_MIN
 
     @staticmethod
     def _shown_value(page, f: FormField) -> str:
@@ -581,6 +676,9 @@ class FormRunner:
         screenshot_path: Path | None = None,
     ) -> FillResult:
         """Fill the form on `page`. Pass `url` to navigate, or `html` to load a saved page (tests)."""
+        if not submit:
+            # Dry run: no `submit` event may go through, whatever a stray Enter or a mis-clicked button does.
+            page.add_init_script(f"({SUBMIT_GUARD_JS})()")
         if html is not None:
             page.set_content(html)
             url = url or "file://fixture"
@@ -603,6 +701,8 @@ class FormRunner:
                         raise
 
         fields, hop = self._locate_form(page, spec)
+        if not submit:
+            page.evaluate(SUBMIT_GUARD_JS)  # the init script covers navigations; this covers set_content
         if hop:
             url = page.url
             result.url = url
@@ -664,8 +764,11 @@ class FormRunner:
                 p.done = True
             except Exception as exc:  # one bad field must not abort the run
                 p.error = str(exc)[:200]
-                if self._retry_with_options(page, p, fields, result):
-                    continue
+                try:
+                    if self._retry_with_options(page, p, fields, result):
+                        continue
+                except Exception as retry_exc:  # noqa: BLE001 - the answer source failed (DB, LLM bug)
+                    p.error = f"{p.error}; retry failed: {str(retry_exc)[:120]}"[:200]
                 log.debug("field not filled", selector=p.field.selector, error=p.error)
         done_idx = {p.field.idx for p in plan if p.done}
         choice_names_done = {p.field.name for p in plan if p.done and p.field.is_choice}
@@ -728,8 +831,9 @@ class FormRunner:
             if not url.startswith("http"):
                 continue
             try:
+                frame.wait_for_load_state("domcontentloaded", timeout=5000)
                 count = frame.locator("input, select, textarea").count()
-            except Exception:  # noqa: BLE001 - detached or cross-origin frame
+            except Exception:  # noqa: BLE001 - detached, cross-origin or still loading frame
                 continue
             if count < self.MIN_FORM_FIELDS:
                 continue
@@ -739,19 +843,28 @@ class FormRunner:
                 best = cand
         return best[2] if best else None
 
+    # A button is only an "Apply" link when it cannot submit anything: not type=submit and not inside a form
+    # (a short quick-apply form's own submit button says "Apply" too).
+    APPLY_BUTTON_OK_JS = (
+        "e => e.tagName !== 'BUTTON' || ((e.type || '').toLowerCase() !== 'submit' && !e.closest('form'))"
+    )
+
     def _follow_apply_link(self, page) -> bool:
-        loc = page.locator(self.APPLY_LINK).first
+        links = page.locator(self.APPLY_LINK)
         try:
-            if not loc.count() or not loc.is_visible():
-                return False
-            href = loc.get_attribute("href")
-            if href and not href.startswith(("#", "javascript:", "mailto:")):
-                page.goto(href if href.startswith("http") else page.url.split("/", 3)[0] + "//" +
-                          page.url.split("/", 3)[2] + href, wait_until="domcontentloaded", timeout=60000)
-            else:
-                loc.click(timeout=5000)
-            page.wait_for_timeout(2500)
-            return True
+            for i in range(min(links.count(), 5)):
+                loc = links.nth(i)
+                if not loc.is_visible() or not loc.evaluate(self.APPLY_BUTTON_OK_JS):
+                    continue
+                href = loc.get_attribute("href")
+                if href and not href.startswith(("#", "javascript:", "mailto:")):
+                    page.goto(href if href.startswith("http") else page.url.split("/", 3)[0] + "//" +
+                              page.url.split("/", 3)[2] + href, wait_until="domcontentloaded", timeout=60000)
+                else:
+                    loc.click(timeout=5000)
+                page.wait_for_timeout(2500)
+                return True
+            return False
         except Exception as exc:  # noqa: BLE001 - a dead link must not abort the run
             log.debug("apply link not followed", error=str(exc)[:120])
             return False
@@ -814,6 +927,7 @@ class FormRunner:
         for sel in selector.split(","):
             loc = page.locator(sel.strip()).first
             if loc.count():
+                page.evaluate("() => { window.__jobapplyAllowSubmit = true; }")  # lift the dry-run guard
                 loc.click(timeout=10000)
                 page.wait_for_timeout(3000)
                 break

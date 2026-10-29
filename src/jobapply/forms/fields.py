@@ -47,14 +47,28 @@ EXTRACT_JS = r"""
     }
     return '';
   };
-  // Inputs that share a small container with a combobox: React-Select's required-validation twin, or an ATS
-  // "question_<n>" text input mirrored by a visible combobox. Returns the one other text input, or null.
+  // A text input that only mirrors a combobox for validation, never one the user is meant to type into:
+  // React-Select's requiredInput (tabindex -1, opacity 0, class *required*) or an ATS question_<n> box.
+  const looksMirror = (x) => {
+    if (!(x.type === 'text' || x.type === '')) return false;
+    if (x.tabIndex === -1 || x.getAttribute('aria-hidden') === 'true') return true;
+    if (/required/i.test(x.className) || /^question_\d+$/.test(x.id)) return true;
+    const st = window.getComputedStyle(x);
+    const r = x.getBoundingClientRect();
+    return st.opacity === '0' || st.pointerEvents === 'none' || (r.width === 0 && r.height === 0);
+  };
+  // The input that shares a small container with a combobox and looks like its validation mirror. A real
+  // field beside it (a phone number next to a country-code picker, a postal code next to a city) is not a
+  // twin: it keeps its own label, is filled on its own and is reported when left empty.
   const twinOf = (el) => {
     let n = el.parentElement;
     for (let d = 0; d < 6 && n && n.tagName !== 'FORM' && n !== document.body; d++, n = n.parentElement) {
       const inputs = Array.from(n.querySelectorAll('input')).filter(x => !['hidden', 'submit', 'button', 'image', 'file', 'checkbox', 'radio'].includes(x.type));
       if (inputs.length < 2) continue;
-      if (inputs.length === 2) return inputs.find(x => x !== el) || null;
+      if (inputs.length === 2) {
+        const other = inputs.find(x => x !== el) || null;
+        return other && looksMirror(other) ? other : null;
+      }
       return null;
     }
     return null;

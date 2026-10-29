@@ -243,8 +243,14 @@ def answer_question(session: Session, llm: LLM | None, user: User, question: str
 
 
 def master_resume_pdf(user: User) -> Path:
-    """The user's resume with no tailoring: the uploaded PDF when there is one, else the master JSON
-    Resume rendered once to `variants/master.pdf` (re-rendered when the profile changes)."""
+    """The user's resume with no tailoring: the uploaded file when there is one, else the master JSON
+    Resume rendered once to `variants/master.pdf` (re-rendered when the profile changes).
+
+    A resume the user uploaded on the Profile page (`profile['resume_file']`) wins over everything; after
+    that a PDF in the legacy `profile['resumes']` list; only with neither is the master JSON rendered."""
+    resume_file = str((user.profile or {}).get("resume_file") or "")
+    if resume_file and Path(resume_file).exists():
+        return Path(resume_file)
     uploads = [r for r in (user.profile or {}).get("resumes") or [] if str(r.get("path", "")).lower().endswith(".pdf")]
     for entry in reversed(uploads):
         if Path(entry["path"]).exists():

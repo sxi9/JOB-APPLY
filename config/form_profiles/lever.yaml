@@ -1,5 +1,6 @@
-# Lever (jobs.lever.co/<company>/<id>/apply). Selectors recorded from a live form on 2026-10-28.
-# Custom questions live in cards[<uuid>][fieldN] inputs and are mapped by label.
+# Lever (jobs.lever.co/<company>/<id>/apply). Standard selectors re-verified on a live Palantir form
+# 2026-10-29. Custom questions live in cards[<uuid>][fieldN] inputs (generated per posting) and are left to
+# the answer bank. The EEO self-identification block uses stable eeo[...] select names.
 ats: lever
 detect: "jobs\\.(eu\\.)?lever\\.co/[^/]+/[0-9a-f-]{36}"
 steps:
@@ -17,6 +18,8 @@ fields:
   "input[name=\"urls[Other]\"]": skip
   "input[name=resume]": derived.resume_path
   "textarea[name=comments]": derived.cover_letter
+  "select[name=\"eeo[veteran]\"]": profile.veteran_status      # standard Lever EEO self-id selects
+  "select[name=\"eeo[disability]\"]": profile.disability_status
   "label=consent": const:Yes
 submit: "#btn-submit"
 success:

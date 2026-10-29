@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from jobapply.ai.fake import FakeLLM
 from jobapply.forms.fields import extract_fields
 from jobapply.forms.profiles import VaultView
@@ -67,6 +69,11 @@ def test_extract_classifies_comboboxes_and_pairs_twins(page):
     # Plain controls are untouched
     assert by_label["Country of residence *"].type == "select"
     assert by_label["First name *"].type == "text" and not by_label["First name *"].twin
+    # A real input beside an optional combobox (phone number next to a country-code picker) is not its twin
+    phone = next(f for f in fields if f.id == "phone")
+    assert phone.type == "tel" and phone.required and not phone.hidden and not phone.twin
+    dial = next(f for f in fields if f.id == "dial")
+    assert dial.type == "combobox" and dial.label == "Country code" and not dial.required
 
 
 # ------------------------------------------------------------------ filling
@@ -91,6 +98,8 @@ def test_dry_run_fills_comboboxes_and_autocomplete(page, session, demo, resume):
     assert _single_value(page, "question_4") == "No"
     assert page.locator("#question_4").input_value() == "No"
     assert page.locator("#country").input_value() == "India"
+    # the phone number goes into the phone input, not into the country-code combobox beside it
+    assert page.locator("#phone").input_value() == DEMO_PROFILE["phone"]
     # hidden twins are never reported as unfilled
     assert result.unfilled_required == [], result.unfilled_required
     assert result.paused_reason == "", result.summary()
@@ -98,14 +107,79 @@ def test_dry_run_fills_comboboxes_and_autocomplete(page, session, demo, resume):
     assert answered["Have you worked here before? *"] == "No" and answered["Highest degree *"] == "Bachelor's Degree"
 
 
-def test_autocomplete_falls_back_to_first_suggestion_and_flags_it(page, session, demo, resume):
-    profile = {**DEMO_PROFILE, "location": "Mysuru"}
+@pytest.mark.parametrize(
+    ("location", "expected"),
+    [
+        ("Mysuru", "Mysore, Karnataka, India"),  # one suggestion
+        ("Bentley", "Bengaluru, Karnataka, India"),  # several: the FIRST one, not the second (ArrowDown+Enter)
+    ],
+)
+def test_autocomplete_falls_back_to_first_suggestion_and_flags_it(page, session, demo, resume, location, expected):
+    profile = {**DEMO_PROFILE, "location": location}
     v = VaultView(profile=profile, resume_path=str(resume))
     runner = FormRunner(session, v, answers=StubAnswers(), llm=FakeLLM(), user=demo, profiles_dir=PROFILES)
     result = runner.run(page, url="https://careers.example.com/apply/cb2", html=COMBOBOX_HTML)
-    assert _single_value(page, "city") == "Mysore, Karnataka, India"
+    assert _single_value(page, "city") == expected
     assert any("first suggestion" in n and "Location (City)" in n for n in result.needs_human), result.needs_human
     assert result.paused_reason == "a question needs a human"
+    assert not page.locator("#thanks").is_visible()
+
+
+def test_no_options_notice_is_not_an_option(page, session, demo, resume):
+    """React-Select renders `select__menu-notice--no-options` inside the listbox: it must read as an empty menu,
+    so an autocomplete is not mistaken for a fixed list of ["No options"]."""
+    runner = _runner(session, demo, resume, StubAnswers())
+    page.set_content(COMBOBOX_HTML)
+    city = next(f for f in extract_fields(page) if f.id == "city")
+    loc = page.locator(city.selector).first
+    assert runner._open_empty(page, city, loc) == []
+    loc.press_sequentially("zz", delay=15)
+    assert runner._wait_options(page, city, loc, 600) == []
+    assert not any("no options" in t.lower() for t in runner._wait_options(page, city, loc, 300))
+
+
+def test_dry_run_guard_blocks_enter_on_closed_menu(page, session, demo, resume):
+    """Enter on a combobox input whose menu is closed is the browser's implicit form submission. A dry run
+    installs a submit guard, so even a stray Enter leaves the form unsent."""
+    runner = _runner(session, demo, resume, StubAnswers())
+    result = runner.run(page, url="https://careers.example.com/apply/cb4", html=COMBOBOX_HTML, submit=False)
+    assert not result.submitted and not page.locator("#thanks").is_visible()
+    page.locator("#first_name").press("Enter")
+    page.locator("#q1").press("Escape")
+    page.locator("#q1").press("Enter")
+    page.wait_for_timeout(200)
+    assert not page.locator("#thanks").is_visible()
+    # the runner itself never presses Enter unless the menu is open with a focused row
+    q1 = next(f for f in extract_fields(page) if f.id == "q1")
+    assert runner._enter_commits(page, q1, page.locator("#q1").first) is False
+
+
+def test_locate_form_does_not_click_a_quick_apply_submit_button(page, session, demo, resume):
+    """A two-field quick-apply form has fewer than MIN_FORM_FIELDS fields and its submit button says "Apply":
+    that button is the form's submit control, not a link to the application, and must not be clicked."""
+    quick = ('<html><body><h1>Backend Engineer</h1>'
+             '<form onsubmit="event.preventDefault(); document.getElementById(\'thanks\').style.display=\'block\'">'
+             '<label for="em">Email *</label><input id="em" name="email" type="email" required>'
+             '<label for="cv">Resume</label><input id="cv" type="file" name="resume">'
+             '<button type="submit">Apply</button></form>'
+             '<div id="thanks" style="display:none">Thank you for applying</div></body></html>')
+    _route_fixture(page, {"/job": quick})
+    runner = _runner(session, demo, resume, AnswerSource(session, FakeLLM(), demo))
+    result = runner.run(page, url="http://fixture.test/job", submit=False)
+    assert result.url == "http://fixture.test/job" and page.url == "http://fixture.test/job"
+    assert not result.submitted and not page.locator("#thanks").is_visible()
+    assert page.locator("#em").input_value() == DEMO_PROFILE["email"]
+
+
+def test_shows_rejects_short_substring_matches():
+    shows = FormRunner._shows
+    assert shows("Norway", "No", "No") is False  # "No" is in "Norway", but that is not the pick
+    assert shows("Not applicable", "No", "No") is False
+    assert shows("No", "No", "No") is True
+    assert shows("Bengaluru, Karnataka, India", "Bengaluru", "Bengaluru") is True
+    assert shows("India +91", "India", "Bengaluru, India") is True
+    assert shows("Bachelor's Degree", "Bachelor's Degree", "Bachelor") is True
+    assert shows("Bengaluru", "Bengaluru, Karnataka, India", "Bengaluru") is False  # only echoes what was typed
 
 
 def test_combobox_without_answer_is_reported_once(page, session, demo, resume):
@@ -138,6 +212,12 @@ def test_best_option_ranking():
     assert best(["Norway", "Nothing"], "No") is None  # short values never start-with match
     assert best(["Bengaluru, Karnataka, India"], "Bengaluru, India") == "Bengaluru, Karnataka, India"
     assert best(["Yes", "No"], "Maybe") is None
+    # free text containing "no" / "yes" is not a boolean answer: hand it back so the options are re-asked
+    assert best(["Yes", "No"], "Unknown") is None
+    assert best(["Yes", "No"], "I don't know") is None
+    assert best(["Yes", "No"], "Innovation") is None
+    assert FormRunner._pick_option(["Yes", "No"], "Unknown") is None
+    assert FormRunner._pick_option(["Germany", "India"], "Bengaluru, India") == "India"
 
 
 # ------------------------------------------------------------------ _locate_form hops

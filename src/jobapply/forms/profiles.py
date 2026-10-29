@@ -149,6 +149,7 @@ MAPPABLE_KEYS: dict[str, str] = {
     "derived.needs_sponsorship": "yes/no: needs visa sponsorship",
     "derived.willing_to_relocate": "yes/no: willing to relocate",
     "profile.education": "highest education",
+    "profile.summary": "short professional summary / 'about you'",
     "profile.gender": "gender (EEO)",
     "profile.veteran_status": "veteran status (EEO)",
     "profile.disability_status": "disability status (EEO)",

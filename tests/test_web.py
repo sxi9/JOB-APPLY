@@ -222,6 +222,13 @@ def test_profile_save_and_answers(client, engine):
     assert "not valid JSON" in client.get("/profile").text
 
 
+def test_profile_shows_completeness_card_and_resume_upload(client):
+    login(client, "demo", "demo1234")
+    page = client.get("/profile").text
+    assert "What we still need from you" in page  # completeness card renders
+    assert 'action="/profile/resume-file"' in page and 'accept=".pdf,.docx"' in page  # resume upload present
+
+
 def test_admin_switches_and_users(client, engine):
     _, csrf = login(client, "admin", "admin1234")
     resp = client.post(

@@ -1,6 +1,8 @@
-# Workable (apply.workable.com/j/<code>/apply). Field names from Workable's standard application form;
-# NOT verified against a live page from the cloud sandbox (the site rate-limits with a captcha). Review the
-# first dry-run screenshot locally.
+# Workable (apply.workable.com/j/<code>/apply, apply.workable.com/<company>/j/<code>/apply). Verified on a
+# live Hugging Face form 2026-10-29. Workable's built-in fields keep stable names (firstname, lastname,
+# email, phone, address, summary); the resume upload is a file input with a GENERATED name/id so it is
+# matched by type, not name. LinkedIn/GitHub and screening prompts are per-posting custom fields (CA_<n> /
+# QA_<n>) and are left to the answer bank.
 ats: workable
 detect: "apply\\.workable\\.com/(j/|[^/]+/j/)"
 steps:
@@ -12,11 +14,9 @@ fields:
   "input[name=email]": profile.email
   "input[name=phone]": profile.phone
   "input[name=address]": profile.location
-  "input[name=resume]": derived.resume_path
-  "input[name=headline]": profile.current_title
+  "input[type=file]": derived.resume_path    # resume dropzone input has no stable name/id
   "textarea[name=summary]": profile.summary
   "textarea[name=cover_letter]": derived.cover_letter
-  "input[name=linkedin]": profile.linkedin
   "label=consent": const:Yes
   "label=privacy": const:Yes
 submit: "button[data-ui=submit-application], button[type=submit]"

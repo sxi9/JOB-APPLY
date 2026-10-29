@@ -50,6 +50,18 @@ def test_resolve_key():
     assert resolve_key("skip", v).kind == "skip" and resolve_key("garbage", v).kind == "skip"
 
 
+def test_file_key_fills_only_one_input(session, resume):
+    # A broad file selector (`input[type=file]`, used when the resume dropzone has a generated name) must plan
+    # the resume into a single input, not every file input on the page (a portfolio / cover-letter attach slot).
+    fields = [
+        FormField(0, "#resume", "input", "file", id="resume", label="Resume"),
+        FormField(1, "#portfolio", "input", "file", id="portfolio", label="Portfolio (attach)"),
+    ]
+    runner = FormRunner(session, vault(resume), profiles_dir=PROFILES)
+    plan = runner.plan_from_spec(fields, {"input[type=file]": "derived.resume_path"}, "builtin")
+    assert [p.field.id for p in plan] == ["resume"]
+
+
 def test_match_selector():
     fields = [
         FormField(0, "#first_name", "input", "text", id="first_name", label="First Name*"),

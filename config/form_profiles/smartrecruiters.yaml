@@ -1,6 +1,7 @@
-# SmartRecruiters one-click apply (jobs.smartrecruiters.com/oneclick-ui/...). Field names from the
-# standard apply form; NOT verified against a live page from the cloud sandbox (captcha-gated). Review the
-# first dry-run screenshot locally.
+# SmartRecruiters (jobs.smartrecruiters.com/<Company>/<id>). Field names from the standard apply form.
+# STILL NOT verified live: the public posting is fronted by a DataDome bot wall (geo.captcha-delivery.com)
+# that blocks headless automation entirely, so these selectors remain best-effort. The resume upload is a
+# file widget, matched by type rather than an assumed name. Review the first real dry-run screenshot locally.
 ats: smartrecruiters
 detect: "jobs\\.smartrecruiters\\.com/"
 steps:
@@ -12,7 +13,7 @@ fields:
   "input[name=email]": profile.email
   "input[name=phoneNumber]": profile.phone
   "input[name=location]": profile.location
-  "input[name=resume]": derived.resume_path
+  "input[type=file]": derived.resume_path
   "input[name=linkedin]": profile.linkedin
   "label=privacy": const:Yes
 submit: "button[type=submit]"

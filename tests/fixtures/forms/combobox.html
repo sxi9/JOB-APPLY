@@ -38,6 +38,13 @@
   <div class="field"><label id="city-label" for="city">Location (City) *</label>
     <div class="select-shell" data-name="city" data-remote="Bengaluru, Karnataka, India|Bengaluru Rural, Karnataka, India|Berlin, Germany|Mysore, Karnataka, India|Boston, MA, USA"></div></div>
 
+  <!-- Phone widget: an optional country-code combobox (no required twin) beside the real phone input. The
+       phone input is a field of its own, not the combobox's twin. -->
+  <div class="field"><label for="phone">Phone *</label>
+    <div class="phone-row">
+      <input id="dial" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-label="Country code" placeholder="+91" style="width:60px">
+      <input id="phone" name="phone" type="tel" required></div></div>
+
   <!-- Older ATS layout: a labelled hidden text input question_<n> mirrored by an unlabelled visible combobox -->
   <div class="field"><label for="question_4">Did a current employee refer you? *</label>
     <div class="select-shell" data-name="question_4" data-options="Yes|No" data-legacy="1"></div></div>
@@ -90,7 +97,7 @@
       var m = menu();
       if (!m) { m = document.createElement('div'); m.className = 'select__menu'; shell.appendChild(m); }
       var list = '<div class="select__menu-list" role="listbox" id="react-select-' + name + '-listbox">';
-      if (!options.length) list += '<div class="select__menu-notice">No options</div>';
+      if (!options.length) list += '<div class="select__menu-notice select__menu-notice--no-options">No options</div>';
       options.forEach(function (o, i) {
         list += '<div class="select__option' + (i === 0 ? ' select__option--is-focused' : '') + '" role="option" ' +
           'id="react-select-' + name + '-option-' + i + '" aria-selected="false" tabindex="-1">' + o + '</div>';
