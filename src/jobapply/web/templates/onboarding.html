@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Set up your account · JOB-APPLY{% endblock %}
+
+{% macro field_input(key, profile, field_map) %}
+  {% set label = field_map.get(key, [key, 'text'])[0] %}
+  {% set kind = field_map.get(key, [key, 'text'])[1] %}
+  <div class="field" {% if kind == 'textarea' %}style="grid-column: 1 / -1"{% endif %}>
+    <label for="{{ key }}">{{ label }}</label>
+    {% if kind == 'textarea' %}<textarea id="{{ key }}" name="{{ key }}" rows="3">{{ profile.get(key, '') }}</textarea>
+    {% elif kind == 'yesno' %}<select id="{{ key }}" name="{{ key }}"><option value="">—</option>
+      <option value="yes" {{ 'selected' if profile.get(key) == 'yes' }}>Yes</option>
+      <option value="no" {{ 'selected' if profile.get(key) == 'no' }}>No</option></select>
+    {% else %}<input id="{{ key }}" name="{{ key }}" type="{{ kind }}" value="{{ profile.get(key, '') }}">{% endif %}
+  </div>
+{% endmacro %}
+
+{% block content %}
+<h1>Finish setting up your account</h1>
+<p class="muted small">A few short steps and you are ready to apply. Everything here is private to you.</p>
+
+<nav class="nav" style="margin:16px 0;flex-wrap:wrap">
+  {% for s in steps %}
+    <a href="/onboarding?step={{ s }}" class="{{ 'active' if s == step }}">{{ loop.index }}. {{ s | capitalize }}</a>
+  {% endfor %}
+</nav>
+
+<section class="card">
+{% if step == 'basics' %}
+  <h2>Basics</h2>
+  <p class="muted small">Your name and how companies reach you.</p>
+  <form method="post" action="/onboarding/basics">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="fields">
+      {% for key in ['first_name', 'last_name', 'email', 'phone', 'location', 'linkedin', 'github', 'portfolio'] %}
+        {{ field_input(key, profile, field_map) }}
+      {% endfor %}
+    </div>
+    <button class="btn btn-primary">Save and continue</button>
+  </form>
+
+{% elif step == 'eligibility' %}
+  <h2>Work eligibility</h2>
+  <p class="muted small">Most forms ask these up front.</p>
+  <form method="post" action="/onboarding/eligibility">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="fields">
+      {% for key in ['work_authorization', 'needs_sponsorship', 'willing_to_relocate'] %}
+        {{ field_input(key, profile, field_map) }}
+      {% endfor %}
+    </div>
+    <button class="btn btn-primary">Save and continue</button>
+  </form>
+
+{% elif step == 'roles' %}
+  <h2>Target roles</h2>
+  <p class="muted small">Pick the fields you want, where you want to work, and your salary floor.</p>
+  <form method="post" action="/onboarding/roles">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="field"><label>Career fields (pick a field for every title variant, or expand it for specific sub-roles)</label>
+      <p class="muted small">Selecting <strong>Any … role</strong> covers the whole field; pick sub-roles for a narrower match.</p>
+      <div class="role-picker">
+        {% for fld in role_fields %}
+        <details {{ 'open' if (fld.key in role_selected) or ((fld.key ~ ':*') in role_selected) }}>
+          <summary>
+            <label class="check"><input type="checkbox" name="role_selection" value="{{ fld.key }}:*" {{ 'checked' if (fld.key ~ ':*') in role_selected or fld.key in role_selected }}> <strong>Any {{ fld.label }} role</strong></label>
+          </summary>
+          <div class="subroles" style="padding-left:16px">
+            {% for sr in fld.subroles %}<label class="check"><input type="checkbox" name="role_selection" value="{{ fld.key }}:{{ sr.key }}" {{ 'checked' if (fld.key ~ ':' ~ sr.key) in role_selected }}> {{ sr.label }}</label>{% endfor %}
+          </div>
+        </details>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="field"><label>Locations (use <code>remote</code> for remote jobs)</label>
+      <textarea name="locations" rows="3">{{ (filters.get('locations') or []) | join('\n') }}</textarea></div>
+    <label class="check"><input type="checkbox" name="remote_only" value="1" {{ 'checked' if filters.get('remote_only') }}> Remote only</label>
+    <div class="field"><label>Salary floor (posted maximum must reach this)</label>
+      <input type="number" name="salary_floor" value="{{ filters.get('salary_floor') or '' }}"></div>
+    <button class="btn btn-primary">Save and continue</button>
+  </form>
+
+{% elif step == 'resume' %}
+  <h2>Resume</h2>
+  <p class="muted small">Upload your resume (PDF or DOCX), or paste a JSON Resume to generate tailored variants.</p>
+  {% if resume_file_name %}<p>Current file: <strong>{{ resume_file_name }}</strong></p>{% endif %}
+  <form method="post" action="/onboarding/resume" enctype="multipart/form-data" class="row">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="file" name="file" accept=".pdf,.docx">
+    <button class="btn">Upload resume</button>
+  </form>
+  <form method="post" action="/onboarding/resume" style="margin-top:16px">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="field"><label>Or paste a <a href="https://jsonresume.org/schema" target="_blank" rel="noopener">JSON Resume ↗</a></label>
+      <textarea name="resume_json" rows="10" class="mono"></textarea></div>
+    <button class="btn btn-primary">Save and continue</button>
+  </form>
+  <form method="post" action="/onboarding/resume" style="margin-top:8px">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="btn">Skip for now</button>
+  </form>
+
+{% elif step == 'answers' %}
+  <h2>Standard answers</h2>
+  <p class="muted small">The recurring screening questions, answered once.</p>
+  <form method="post" action="/onboarding/answers">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="fields">
+      {% for key in ['notice_period', 'current_ctc', 'expected_ctc', 'years_experience', 'gender', 'veteran_status', 'disability_status'] %}
+        {{ field_input(key, profile, field_map) }}
+      {% endfor %}
+    </div>
+    <button class="btn btn-primary">Save and continue</button>
+  </form>
+
+{% elif step == 'linkedin' %}
+  <h2>Connect LinkedIn (optional)</h2>
+  <p class="muted small">
+    Assisted sites reuse your own logged-in session. Export your LinkedIn cookies with a browser
+    extension (the common <code>cookies.json</code> array), then upload or paste it here. Your cookies are
+    stored only in your own private browser profile on this server, never in the repo and never shared with
+    other users.
+  </p>
+  <p>Current status: <span class="badge">{{ linkedin_status }}</span></p>
+  <form method="post" action="/onboarding/linkedin" enctype="multipart/form-data" class="row">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="file" name="file" accept=".json,application/json">
+    <button class="btn">Connect from file</button>
+  </form>
+  <form method="post" action="/onboarding/linkedin" style="margin-top:16px">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="field"><label>Or paste the cookie JSON</label>
+      <textarea name="cookies_json" rows="6" class="mono" placeholder='[{"name": "li_at", "value": "...", "domain": ".linkedin.com"}]'></textarea></div>
+    <button class="btn">Connect from pasted JSON</button>
+  </form>
+  <form method="post" action="/onboarding/done" style="margin-top:24px">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="btn btn-primary">Finish setup</button>
+  </form>
+{% endif %}
+</section>
+
+<section class="card" id="needed" style="margin-top:16px">
+  <h2>What we still need from you</h2>
+  {% if not missing %}
+  <p class="muted small">Everything essential is filled in. You are ready to apply.</p>
+  {% else %}
+  <p class="muted small"><span class="chip chip-red">required</span> blocks a clean apply; <span class="chip chip-amber">optional</span> is nice to have.</p>
+  <ul class="needed-list">
+    {% for m in missing %}
+    <li><span class="chip {{ 'chip-red' if m.tier == 'essential' else 'chip-amber' }}">{{ 'required' if m.tier == 'essential' else 'optional' }}</span> {{ m.label }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endblock %}

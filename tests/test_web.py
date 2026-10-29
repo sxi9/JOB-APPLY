@@ -469,6 +469,21 @@ def test_settings_saves_max_age_minutes(client, engine):
         assert demo.filters["max_age_minutes"] is None and demo.filters["max_age_hours"] == 48
 
 
+def test_login_offers_signup_and_new_user_is_nudged(client, engine):
+    # The login page links to self-service sign-up.
+    page = client.get("/login").text
+    assert 'href="/signup"' in page
+    # A brand-new signup lands logged-in and is nudged to finish setup; existing demo is not.
+    signup_page = client.get("/signup").text
+    csrf = re.search(r'name="csrf" value="([^"]+)"', signup_page).group(1)
+    resp = client.post("/signup", data={"username": "freshone", "password": "longpassword1",
+                                        "confirm": "longpassword1", "csrf": csrf})
+    assert resp.status_code == 303 and resp.headers["location"] == "/onboarding"
+    assert "Finish setup" in client.get("/").text
+    with Session(engine) as s:
+        assert s.exec(select(User).where(User.username == "freshone")).one().role == "user"
+
+
 def test_settings_saves_role_selection(client, engine):
     _, csrf = login(client, "demo", "demo1234")
     # The picker renders fields and sub-roles.

@@ -36,6 +36,9 @@
 {% endif %}
 {% endif %}
 <main>
+  {% if ctx and ctx.needs_onboarding and not request.url.path.startswith('/onboarding') %}
+  <div class="flash flash-ok">Your account is not set up yet. <a href="/onboarding">Finish setup →</a></div>
+  {% endif %}
   {% for kind, message in flashes %}<div class="flash flash-{{ kind }}">{{ message }}</div>{% endfor %}
   {% block content %}{% endblock %}
 </main>

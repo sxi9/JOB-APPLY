@@ -39,6 +39,18 @@ class Ctx:
         return self.user.role == Role.admin
 
     @property
+    def needs_onboarding(self) -> bool:
+        """A freshly signed-up user who has not finished the setup wizard. Admins are never nagged, and
+        any existing user with a non-empty profile is treated as already onboarded (so 'sai'/'demo' and
+        anyone who set themselves up before this feature are left alone)."""
+        if self.user.role == Role.admin:
+            return False
+        profile = self.user.profile or {}
+        if profile.get("onboarded") is True:
+            return False
+        return not profile
+
+    @property
     def scope(self) -> UserScope:
         return UserScope(self.session, self.view)
 

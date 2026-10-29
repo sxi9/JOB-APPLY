@@ -21,6 +21,7 @@ from jobapply.web.routes import (
     home,
     inbox,
     jobs,
+    onboarding,
     profile,
     queue,
     referrals,
@@ -53,6 +54,6 @@ def create_app(engine: Engine | None = None, secret_key: str | None = None) -> F
     def healthz() -> dict:
         return {"ok": True}
 
-    for module in (auth, home, jobs, queue, applications, inbox, referrals, profile, settings, admin):
+    for module in (auth, home, jobs, queue, applications, inbox, referrals, profile, settings, onboarding, admin):
         app.include_router(module.router)
     return app

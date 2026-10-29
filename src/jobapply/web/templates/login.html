@@ -12,5 +12,8 @@
       <input id="password" name="password" type="password" autocomplete="current-password" required></div>
     <button class="btn btn-primary" style="width:100%;justify-content:center">Log in</button>
   </form>
+  {% if allow_signup %}
+  <p class="muted small" style="text-align:center;margin-top:16px">New here? <a href="/signup">Create account</a></p>
+  {% endif %}
 </div>
 {% endblock %}

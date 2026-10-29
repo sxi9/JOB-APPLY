@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Create account · JOB-APPLY{% endblock %}
+{% block content %}
+<div class="login-wrap card">
+  <h1>Create your account</h1>
+  <p class="muted small">Sign up, then a short wizard helps you fill in your profile and connect your sites.</p>
+  <form method="post" action="/signup">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="field"><label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="username" value="{{ username }}" required autofocus>
+      <span class="muted small">3-32 characters: letters, numbers, dot, dash or underscore.</span></div>
+    <div class="field"><label for="email">Email (optional)</label>
+      <input id="email" name="email" type="email" autocomplete="email" value="{{ email }}"></div>
+    <div class="field"><label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="new-password" required>
+      <span class="muted small">At least 8 characters.</span></div>
+    <div class="field"><label for="confirm">Confirm password</label>
+      <input id="confirm" name="confirm" type="password" autocomplete="new-password" required></div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center">Create account</button>
+  </form>
+  <p class="muted small" style="text-align:center;margin-top:16px">Already have an account? <a href="/login">Log in</a></p>
+</div>
+{% endblock %}

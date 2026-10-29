@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     secret_key: SecretStr = SecretStr("change-me")
     host: str = "127.0.0.1"
     port: int = 8000
+    # Self-service sign-up. When False, /signup 404s and the login page hides the "Create account" link;
+    # the first user is still bootstrapped by the CLI (`jobapply create-user`).
+    allow_signup: bool = True
 
     # Credential vault: Fernet key (urlsafe base64, 32 bytes). Generate with `jobapply vault-key`.
     vault_key: SecretStr | None = None
