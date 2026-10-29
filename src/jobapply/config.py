@@ -91,6 +91,11 @@ class Settings(BaseSettings):
     # Collectors
     http_timeout: float = 20.0
     user_agent: str = "jobapply/0.1 (+https://github.com/sxi9/JOB-APPLY)"
+    # Ingest guard for evergreen/stale reqs: an ATS posting whose createdAt is older than this is still
+    # stored (we never fake the date) but flagged in its source raw (`stale_posting`) so downstream can
+    # de-prioritise it. The default lines up with the sane default recency windows in the UI and in the
+    # per-user filters (UserFilters.max_age_hours=72), which already exclude postings this old.
+    max_posting_age_days: int = 365
     collect_interval_minutes: int = 45
     # Hot-polling tier: a second collect task over the fast exact-timestamp sources only
     # (ATS APIs for the hot company list + LinkedIn guest), for minute-level recency.

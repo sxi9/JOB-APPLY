@@ -15,8 +15,9 @@
     <a class="brand" href="/">JOB-APPLY</a>
     <nav class="nav">
       {% set path = request.url.path %}
-      {% for href, name in [("/", "Home"), ("/jobs", "Jobs"), ("/queue", "Queue"), ("/applications", "Applications"),
-                            ("/inbox", "Inbox"), ("/referrals", "Referrals"), ("/profile", "Profile"), ("/settings", "Settings")] %}
+      {% for href, name in [("/", "Home"), ("/jobs", "Jobs"), ("/coverage", "Coverage"), ("/queue", "Queue"),
+                            ("/applications", "Applications"), ("/inbox", "Inbox"), ("/referrals", "Referrals"),
+                            ("/profile", "Profile"), ("/settings", "Settings")] %}
         <a href="{{ href }}" class="{{ 'active' if (path == href or (href != '/' and path.startswith(href))) }}">{{ name }}</a>
       {% endfor %}
       {% if ctx.is_admin %}<a href="/admin" class="{{ 'active' if path.startswith('/admin') }}">Admin</a>{% endif %}

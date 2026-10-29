@@ -325,6 +325,35 @@ def test_request_budget_caps_a_run():
     assert len(jobs) == 20 and not any(j.raw.get("details_fetched") for j in jobs)
 
 
+def test_search_budget_is_reserved_for_detail_enrichment():
+    # Regression: broad mode feeds many queries to the guest collector. Before the reservation, the search
+    # phase could spend the whole request budget on search pages, so enrich() ran with the budget already
+    # exhausted and every job was stored as a bare /jobs/view link (no ATS type, Easy Apply unresolved).
+    full = [str(5000 + i) for i in range(PAGE_SIZE)]
+    full2 = [str(6000 + i) for i in range(PAGE_SIZE)]
+    postings = {i: EASY for i in full + full2}
+    routes = Routes(pages={0: _page(full), 10: _page(full2)}, postings=postings)
+    # 12-request budget, 6-detail cap: the reservation (max_requests > max_details) keeps the search phase
+    # from draining the whole budget, so detail enrichment still runs even with five queries queued.
+    c = collector(routes, queries=["a", "b", "c", "d", "e"], max_results=100,
+                  max_requests=12, max_details=6, with_details=True)
+    jobs = c.collect()
+    assert c.search_budget_reached is True
+    searched = {r.url.params.get("keywords") for r in routes.requests if str(r.url).startswith(SEARCH_URL)}
+    assert searched <= {"a", "b", "c"}  # later queries never reached: search did not drain the budget
+    assert sum(1 for j in jobs if j.raw.get("details_fetched")) >= 1  # enrichment was NOT starved
+
+
+def test_small_budget_keeps_full_budget_for_search():
+    # When the budget does not exceed the detail cap, nothing is reserved: behaviour is unchanged, the hard
+    # budget still stops the run (no search_budget_reached path).
+    full = [str(5000 + i) for i in range(PAGE_SIZE)]
+    routes = Routes(pages={0: _page(full), 10: _page(full)}, postings={"5000": EASY})
+    c = collector(routes, queries=["a"], max_results=100, max_requests=4, max_details=40, with_details=True)
+    c.collect()
+    assert c.search_budget_reached is False and c.budget_exhausted is True
+
+
 def test_rate_limit_stops_run_and_keeps_results():
     full = [str(5000 + i) for i in range(PAGE_SIZE)]
     for status in (429, 999):

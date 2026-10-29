@@ -1,6 +1,6 @@
 """Pure tests for the career role taxonomy (no DB, no web)."""
 
-from jobapply.roles import all_fields, field, match_title, subrole, titles_for
+from jobapply.roles import all_fields, field, match_title, search_queries, subrole, titles_for
 
 
 def test_fields_and_subroles_are_well_formed():
@@ -106,3 +106,42 @@ def test_subrole_lookup():
     assert subrole("cybersecurity:soc").label == "SOC analyst"
     assert subrole("cybersecurity:nope") is None
     assert subrole("") is None
+
+
+# ----------------------------------------------------------------- breadth query set
+
+
+def test_search_queries_spans_every_field_and_is_deduped():
+    qs = search_queries()
+    # deterministic, deduped, non-empty, every query a real search phrase (lowercase, no empties).
+    assert qs == list(dict.fromkeys(qs))  # no duplicates
+    assert all(q and q == q.lower().strip() for q in qs)
+    # breadth: representative queries from across the taxonomy are present.
+    for expected in ("software engineer", "soc analyst", "threat intelligence", "data engineer",
+                     "product manager", "devops engineer"):
+        assert expected in qs, expected
+    # one query per field at least -> at least as many fields are represented as there are fields.
+    assert len(qs) >= len(all_fields())
+
+
+def test_search_queries_per_field_limits_count():
+    one = search_queries(per_field=1)
+    three = search_queries(per_field=3)
+    assert len(one) == len(all_fields())  # exactly one representative query per field, all distinct
+    assert len(three) > len(one)
+    assert search_queries(per_field=0) == []
+
+
+def test_search_queries_fields_filter():
+    cyber = search_queries(fields=["cybersecurity"], per_field=2)
+    assert len(cyber) == 2 and "soc analyst" in cyber
+    # Every returned query actually matches its field's titles (so the pool it drives lands in-sector).
+    assert all(match_title(q, ["cybersecurity"]) for q in cyber)
+    # Unknown field keys are ignored, not errors.
+    assert search_queries(fields=["nope"]) == []
+
+
+def test_search_queries_prefers_real_phrases_over_acronyms():
+    # software_engineering's first sub-role has synonyms incl. "sde"/"swe"; the query must be the phrase.
+    sw = search_queries(fields=["software_engineering"], per_field=1)
+    assert sw == ["software engineer"]

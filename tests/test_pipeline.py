@@ -590,6 +590,63 @@ def test_role_selection_gates_matching_like_roles():
     assert with_sel > without
 
 
+# ----------------------------------------------------------------- breadth mode + coverage stats
+
+
+def test_broad_queries_rotates_through_the_taxonomy(engine):
+    from jobapply.collectors.registry import SearchConfig
+    from jobapply.db import session_scope
+    from jobapply.pipeline.collect import BROAD_OFFSET_KEY, broad_queries
+    from jobapply.roles import search_queries
+    from jobapply.switches import get_value
+
+    all_q = search_queries()
+    n = 5
+    first = broad_queries(SearchConfig(), engine, per_run=n)
+    second = broad_queries(SearchConfig(), engine, per_run=n)
+    assert first == all_q[:n]
+    assert second == all_q[n : 2 * n]  # the next slice, no overlap
+    with session_scope(engine) as s:
+        assert int(get_value(s, BROAD_OFFSET_KEY)) == 2 * n
+
+
+def test_broad_queries_wraps_around_the_end(engine):
+    from jobapply.collectors.registry import SearchConfig
+    from jobapply.db import session_scope
+    from jobapply.pipeline.collect import BROAD_OFFSET_KEY, broad_queries
+    from jobapply.roles import search_queries
+    from jobapply.switches import get_value, set_value
+
+    all_q = search_queries()
+    length = len(all_q)
+    with session_scope(engine) as s:
+        set_value(s, BROAD_OFFSET_KEY, str(length - 2))  # near the end
+    picked = broad_queries(SearchConfig(), engine, per_run=5)
+    assert picked == [all_q[(length - 2 + i) % length] for i in range(5)]  # wraps past the end
+    with session_scope(engine) as s:
+        assert int(get_value(s, BROAD_OFFSET_KEY)) == (length - 2 + 5) % length
+
+
+def test_coverage_stats_counts_total_sources_sectors_and_recency(session):
+    from jobapply.pipeline.collect import coverage_stats
+
+    store_jobs(session, [
+        nj(title="SOC Analyst", source="greenhouse", source_id="c1", posted_at=utcnow() - timedelta(hours=2)),
+        nj(title="Backend Engineer", source="linkedin", source_id="c2", posted_at=utcnow() - timedelta(days=3)),
+        nj(title="Data Engineer", source="greenhouse", source_id="c3", posted_at=utcnow() - timedelta(days=20)),
+        nj(title="Zookeeper", source="remotive", source_id="c4", posted_at=utcnow() - timedelta(hours=1)),
+    ])
+    stats = coverage_stats(session)
+    assert stats["total"] == 4
+    assert stats["by_source"] == {"greenhouse": 2, "linkedin": 1, "remotive": 1}
+    assert stats["by_sector"]["cybersecurity"] == 1
+    assert stats["by_sector"]["software_engineering"] == 1
+    assert stats["by_sector"]["data"] == 1
+    assert stats["by_sector"]["other"] == 1  # "Zookeeper" matches no field
+    assert stats["last_24h"] == 2  # SOC (2h) + Zookeeper (1h)
+    assert stats["last_7d"] == 3   # + Backend (3d); Data Engineer (20d) excluded
+
+
 def test_assign_jobs_matches_cyber_user_by_role_selection(session):
     sel = UserFilters(role_selection=["cybersecurity:*"]).model_dump()
     cat = User(username="cat", password_hash="x", filters=sel)
@@ -603,3 +660,126 @@ def test_assign_jobs_matches_cyber_user_by_role_selection(session):
     got = [session.get(Job, a.job_id).title
            for a in session.exec(select(Application).where(Application.user_id == cat.id)).all()]
     assert got == ["Security Operations Center Analyst"]
+
+
+def test_broad_queries_can_hold_the_offset(engine):
+    # advance=False returns the current slice without moving the stored offset, so the next run retries it.
+    from jobapply.collectors.registry import SearchConfig
+    from jobapply.db import session_scope
+    from jobapply.pipeline.collect import BROAD_OFFSET_KEY, broad_queries
+    from jobapply.switches import get_value
+
+    first = broad_queries(SearchConfig(), engine, per_run=4, advance=False)
+    second = broad_queries(SearchConfig(), engine, per_run=4, advance=False)
+    assert first == second  # same slice while held
+    with session_scope(engine) as s:
+        assert int(get_value(s, BROAD_OFFSET_KEY) or 0) == 0  # offset never advanced
+
+
+def test_user_queries_expands_role_selection(engine):
+    # Regression: a user who picked their field through the taxonomy picker (role_selection) must also
+    # contribute per-run queries, not only free-text filters.roles.
+    from jobapply.pipeline.collect import user_queries
+    from jobapply.roles import search_queries
+
+    with Session(engine) as s:
+        s.add(User(username="free", password_hash="x", filters={"roles": ["golang developer"]}))
+        s.add(User(username="picker", password_hash="x", filters={"role_selection": ["sales:*"]}))
+        s.commit()
+    q = user_queries(engine)
+    assert "golang developer" in q  # free-text role kept
+    assert set(search_queries(fields=["sales"])) <= set(q)  # picker's field expanded to representative queries
+
+
+def test_run_all_breadth_path_wires_broad_and_user_queries(engine, monkeypatch):
+    # Regression: the collectors=None breadth path (broad rotation + user queries merged into
+    # build_collectors) had no coverage; the other run_all test injects collectors and bypasses it.
+    import jobapply.pipeline.collect as collect_mod
+    from jobapply.collectors.registry import SearchConfig
+    from jobapply.db import session_scope
+    from jobapply.pipeline.collect import BROAD_OFFSET_KEY, run_all
+    from jobapply.roles import search_queries
+    from jobapply.switches import get_value
+
+    with Session(engine) as s:
+        s.add(User(username="picker", password_hash="x",
+                   filters={"role_selection": ["sales:*"], "max_age_hours": 0}))
+        s.commit()
+
+    searches = SearchConfig(queries=["python developer"], broad=True, broad_queries_per_run=3,
+                            feeds=[], linkedin={})
+    monkeypatch.setattr(collect_mod, "load_searches", lambda *a, **k: searches)
+
+    captured: dict = {}
+    good = GreenhouseCollector("stripe", client=fixture_client({"greenhouse": "greenhouse_stripe.json"}))
+
+    def fake_build(searches=None, extra_queries=None, only=None):
+        captured["extra"] = list(extra_queries or [])
+        return [good]
+
+    monkeypatch.setattr(collect_mod, "build_collectors", fake_build)
+    result = run_all(engine=engine)
+
+    broad_slice = search_queries()[:3]
+    assert captured["extra"][:3] == broad_slice  # the broad rotation slice leads
+    assert set(search_queries(fields=["sales"])) <= set(captured["extra"])  # picker user's field appended
+    expected = len(dict.fromkeys(["python developer", *captured["extra"]]))
+    assert result["queries"] == expected  # deduped union of config + broad + user queries
+    with session_scope(engine) as s:
+        assert int(get_value(s, BROAD_OFFSET_KEY)) == 3  # rotation advanced by the slice size
+
+
+def test_run_all_keeps_rotation_slice_when_linkedin_on_cooldown(engine, monkeypatch):
+    # Regression: broad_queries() advanced the offset even when the LinkedIn guest collector (main breadth
+    # source) was on cooldown and skipped the run, burning sectors that were never searched.
+    import jobapply.pipeline.collect as collect_mod
+    from jobapply.collectors.registry import SearchConfig
+    from jobapply.db import session_scope
+    from jobapply.pipeline.collect import BROAD_OFFSET_KEY, run_all
+    from jobapply.sites.linkedin.search import set_guest_cooldown
+    from jobapply.switches import get_value
+
+    searches = SearchConfig(queries=[], broad=True, broad_queries_per_run=3, feeds=[], linkedin={})
+    monkeypatch.setattr(collect_mod, "load_searches", lambda *a, **k: searches)
+    monkeypatch.setattr(collect_mod, "build_collectors", lambda **k: [])
+    with session_scope(engine) as s:
+        set_guest_cooldown(s, 2.0)  # the guest collector will skip this run
+    run_all(engine=engine)
+    with session_scope(engine) as s:
+        assert int(get_value(s, BROAD_OFFSET_KEY) or 0) == 0  # slice held for retry, offset not advanced
+
+
+def test_coverage_new_counts_match_jobs_recency(session):
+    # Regression: the New(24h)/New(7d) tiles counted first_seen_at but deep-linked to /jobs?hours=N, whose
+    # filter is posted_at-based, so the tile number did not match the page it opened.
+    from jobapply.web.routes.coverage import new_counts
+
+    store_jobs(session, [
+        nj(source_id="stale_posted", posted_at=utcnow() - timedelta(days=3)),  # posted 3d ago, seen just now
+        nj(title="Frontend Engineer", source_id="fresh", posted_at=utcnow() - timedelta(hours=2)),
+    ])
+    n24, n7 = new_counts(session)
+    assert n24 == 1  # the 3-day-old posting is excluded like on /jobs?hours=24; first_seen_at would give 2
+    assert n7 == 2
+
+
+def test_coverage_matched_counts_only_filter_passes(session):
+    # Regression: matched counted every Application row, including ones created by manual skip/blocklist on
+    # jobs that never passed the user's filters, overstating the filter-match number.
+    from sqlalchemy import func
+
+    from jobapply.web.routes.coverage import matched_count
+
+    user = User(username="mc", password_hash="x", filters={"roles": ["python"]})
+    session.add(user)
+    session.commit()
+    ids = store_jobs(session, [nj(title="Python Engineer", source_id="pe"),
+                               nj(title="Java Engineer", source_id="je")])
+    assign_jobs(session, ids)  # only the Python job passes -> one Application with a "new" event
+    java = session.exec(select(Job).where(Job.title == "Java Engineer")).one()
+    session.add(Application(user_id=user.id, job_id=java.id, status=AppStatus.skipped))  # manual, non-matching
+    session.commit()
+    total_rows = session.exec(
+        select(func.count()).select_from(Application).where(Application.user_id == user.id)).one()
+    assert total_rows == 2  # both rows exist
+    assert matched_count(session, user.id) == 1  # but only the real filter match is counted

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -15,6 +16,19 @@ from jobapply.collectors.base import (
     parse_dt,
     parse_salary,
 )
+from jobapply.config import get_settings
+
+
+def is_stale_posting(posted_at: datetime | None, max_days: int | None = None) -> bool:
+    """True when a posting's timestamp is older than `max_days` (default `max_posting_age_days`).
+
+    Evergreen ATS reqs (Lever especially) keep an original `createdAt` from years ago, which shows up as
+    e.g. "2906 d ago". We do NOT fake the date; this just lets the collector flag such rows so the UI and
+    scoring can de-prioritise them while the real posted_at is preserved."""
+    if posted_at is None:
+        return False
+    days = max_days if max_days is not None else get_settings().max_posting_age_days
+    return (datetime.now(UTC) - posted_at) > timedelta(days=max(1, int(days)))
 
 
 class CompanyCollector(BaseCollector):
@@ -71,11 +85,15 @@ class LeverCollector(CompanyCollector):
         cats = j.get("categories") or {}
         location = cats.get("location") or ", ".join(cats.get("allLocations") or [])
         salary = j.get("salaryRange") or {}
+        posted_at = parse_dt(j.get("createdAt"))
+        # Keep the real createdAt; just flag an evergreen/stale req (see is_stale_posting) in the stored
+        # source raw so downstream can de-prioritise it without the date being faked.
+        raw = {**j, "stale_posting": True} if is_stale_posting(posted_at) else j
         return self.job(
             title=j["text"].strip(),
             location=location,
             remote=j.get("workplaceType") == "remote" or looks_remote(location),
-            posted_at=parse_dt(j.get("createdAt")),
+            posted_at=posted_at,
             url=j.get("hostedUrl", ""),
             apply_url=j.get("applyUrl") or j.get("hostedUrl", ""),
             description=first(j.get("descriptionPlain"), html_to_text(j.get("description"))) or "",
@@ -83,7 +101,7 @@ class LeverCollector(CompanyCollector):
             salary_max=salary.get("max"),
             currency=salary.get("currency"),
             source_id=j["id"],
-            raw=j,
+            raw=raw,
         )
 
 

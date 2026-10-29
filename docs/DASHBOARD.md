@@ -11,6 +11,14 @@ Username and password. Roles: admin (sees all users) and user (own data only).
 - Activity feed with screenshot thumbnails.
 - Collector health: each source, last run, count, red when failing.
 
+## Coverage
+- Dedicated page (`/coverage`, `web/routes/coverage.py` + `coverage.html`, linked in the nav), per-user scoped through `ctx.view` so an admin "View as" sees that user's match count against the shared pool. Read-only (GET), so no CSRF.
+- **Stat tiles:** jobs in pool (total), new in 24h, new in 7d, and how many match the viewed user's filters (= that user's `Application` rows, which exist from the moment a job passes their filters). Tiles link into the relevant `/jobs` views.
+- **Matched-vs-total line:** "N match your filters of M total", with a hint that a small matched number means narrow filters, not an empty pool — this answers the recurring "why so few jobs?" confusion on-screen. Points at `/settings` to widen.
+- **By sector:** counts pool jobs whose title matches each of the 15 taxonomy fields via `roles.taxonomy.match_title` (Software Engineering, Cybersecurity, Data & AI, ...), shown as labelled bars, biggest first; all fields are listed so the full taxonomy is visible.
+- **By source:** jobs grouped by `Job.source` (greenhouse / lever / linkedin / ...) as a small bar table.
+- **Pool size** and the **by-source** breakdown prefer the collector side's shared `coverage_stats(session)` helper when it is importable (lazy import, tried on `pipeline.collect` then `pipeline.coverage`); any import error or unexpected return falls back to an inline count, so the page and its tests never depend on that helper having landed. Empty-safe (zero pool renders, no divide-by-zero).
+
 ## Jobs
 - Filters: posted in last N hours, source, score, location, remote, salary, company.
 - Row: title, company, location, posted time, source badge, AI match score, status chip.

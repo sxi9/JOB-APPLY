@@ -1,5 +1,12 @@
 # Target companies. `jobapply detect-companies` fills in ats and slug from careers_url.
+#
+# Multi-sector curated list of public ATS boards (Greenhouse / Lever / Ashby / Workable /
+# SmartRecruiters), grouped by sector so the direct-ATS tier covers more than a few companies.
+# All slugs below were verified live against their public JSON API on 2026-10-29 (board reachable,
+# >0 postings) unless marked "unverified". Add careers_url-only rows and run `jobapply detect-companies`
+# to resolve new ones.
 companies:
+# ---------------------------------------------------------------- original seed (kept)
 - name: Stripe
   ats: greenhouse
   slug: stripe
@@ -17,3 +24,375 @@ companies:
   slug: Experian
 - name: Notion
   careers_url: https://jobs.ashbyhq.com/notion
+
+# ---------------------------------------------------------------- big tech / consumer internet
+- name: Airbnb
+  ats: greenhouse
+  slug: airbnb
+- name: Dropbox
+  ats: greenhouse
+  slug: dropbox
+- name: Pinterest
+  ats: greenhouse
+  slug: pinterest
+- name: Lyft
+  ats: greenhouse
+  slug: lyft
+- name: Reddit
+  ats: greenhouse
+  slug: reddit
+- name: Discord
+  ats: greenhouse
+  slug: discord
+- name: Peloton
+  ats: greenhouse
+  slug: peloton
+- name: Nextdoor
+  ats: greenhouse
+  slug: nextdoor
+- name: Roku
+  ats: greenhouse
+  slug: roku
+- name: Block
+  ats: greenhouse
+  slug: block
+- name: Spotify
+  ats: lever
+  slug: spotify
+- name: Substack
+  ats: ashby
+  slug: substack
+
+# ---------------------------------------------------------------- fintech / finance
+- name: Coinbase
+  ats: greenhouse
+  slug: coinbase
+- name: Brex
+  ats: greenhouse
+  slug: brex
+- name: Affirm
+  ats: greenhouse
+  slug: affirm
+- name: Chime
+  ats: greenhouse
+  slug: chime
+- name: SoFi
+  ats: greenhouse
+  slug: sofi
+- name: Upstart
+  ats: greenhouse
+  slug: upstart
+- name: Robinhood
+  ats: greenhouse
+  slug: robinhood
+- name: Betterment
+  ats: greenhouse
+  slug: betterment
+- name: Gemini
+  ats: greenhouse
+  slug: gemini
+- name: Mercury
+  ats: greenhouse
+  slug: mercury
+
+# ---------------------------------------------------------------- cybersecurity vendors
+- name: Huntress
+  ats: greenhouse
+  slug: huntress
+- name: Abnormal Security
+  ats: greenhouse
+  slug: abnormalsecurity
+- name: Tanium
+  ats: greenhouse
+  slug: tanium
+- name: Okta
+  ats: greenhouse
+  slug: okta
+- name: Netskope
+  ats: greenhouse
+  slug: netskope
+- name: Bitwarden
+  ats: greenhouse
+  slug: bitwarden
+- name: Rubrik
+  ats: greenhouse
+  slug: rubrik
+- name: Orca Security
+  ats: greenhouse
+  slug: orcasecurity
+- name: Verkada
+  ats: greenhouse
+  slug: verkada
+- name: Vanta
+  ats: ashby
+  slug: vanta
+
+# ---------------------------------------------------------------- SaaS / dev tools / infrastructure
+- name: Databricks
+  ats: greenhouse
+  slug: databricks
+- name: GitLab
+  ats: greenhouse
+  slug: gitlab
+- name: Elastic
+  ats: greenhouse
+  slug: elastic
+- name: Sumo Logic
+  ats: greenhouse
+  slug: sumologic
+- name: Samsara
+  ats: greenhouse
+  slug: samsara
+- name: Airtable
+  ats: greenhouse
+  slug: airtable
+- name: Gusto
+  ats: greenhouse
+  slug: gusto
+- name: Twilio
+  ats: greenhouse
+  slug: twilio
+- name: Asana
+  ats: greenhouse
+  slug: asana
+- name: Cloudflare
+  ats: greenhouse
+  slug: cloudflare
+- name: Figma
+  ats: greenhouse
+  slug: figma
+- name: MongoDB
+  ats: greenhouse
+  slug: mongodb
+- name: New Relic
+  ats: greenhouse
+  slug: newrelic
+- name: Datadog
+  ats: greenhouse
+  slug: datadog
+- name: PagerDuty
+  ats: greenhouse
+  slug: pagerduty
+- name: Fastly
+  ats: greenhouse
+  slug: fastly
+- name: Calendly
+  ats: greenhouse
+  slug: calendly
+- name: Mixpanel
+  ats: greenhouse
+  slug: mixpanel
+- name: Lattice
+  ats: greenhouse
+  slug: lattice
+- name: CockroachDB
+  ats: greenhouse
+  slug: cockroachlabs
+- name: LaunchDarkly
+  ats: greenhouse
+  slug: launchdarkly
+- name: Netlify
+  ats: greenhouse
+  slug: netlify
+- name: Fivetran
+  ats: greenhouse
+  slug: fivetran
+- name: Starburst
+  ats: greenhouse
+  slug: starburst
+- name: Imply
+  ats: greenhouse
+  slug: imply
+- name: Smartsheet
+  ats: greenhouse
+  slug: smartsheet
+- name: Greenhouse
+  ats: greenhouse
+  slug: greenhouse
+- name: Linear
+  ats: ashby
+  slug: linear
+- name: PostHog
+  ats: ashby
+  slug: posthog
+- name: Hex
+  ats: ashby
+  slug: hex
+- name: Watershed
+  ats: ashby
+  slug: watershed
+- name: Ashby
+  ats: ashby
+  slug: ashby
+- name: Browserbase
+  ats: ashby
+  slug: browserbase
+- name: Baseten
+  ats: ashby
+  slug: baseten
+- name: Modal
+  ats: ashby
+  slug: modal
+- name: Writer
+  ats: ashby
+  slug: writer
+- name: Warp
+  ats: ashby
+  slug: warp
+- name: Neon
+  ats: ashby
+  slug: neon
+- name: Zed
+  ats: ashby
+  slug: zed
+- name: Clerk
+  ats: ashby
+  slug: clerk
+- name: Resend
+  ats: ashby
+  slug: resend
+- name: Knock
+  ats: ashby
+  slug: knock
+- name: Greptile
+  ats: ashby
+  slug: greptile
+- name: Metabase
+  ats: lever
+  slug: metabase
+- name: Veeva
+  ats: lever
+  slug: veeva
+
+# ---------------------------------------------------------------- AI / ML
+- name: Anthropic
+  ats: greenhouse
+  slug: anthropic
+- name: Scale AI
+  ats: greenhouse
+  slug: scaleai
+- name: OpenAI
+  ats: ashby
+  slug: openai
+- name: Cohere
+  ats: ashby
+  slug: cohere
+- name: ElevenLabs
+  ats: ashby
+  slug: elevenlabs
+- name: Harvey
+  ats: ashby
+  slug: harvey
+- name: Perplexity
+  ats: ashby
+  slug: perplexity
+- name: Cursor
+  ats: ashby
+  slug: cursor
+- name: Runway
+  ats: ashby
+  slug: runway
+- name: Sierra
+  ats: ashby
+  slug: sierra
+- name: Decagon
+  ats: ashby
+  slug: decagon
+- name: Fireworks AI
+  ats: ashby
+  slug: fireworks
+- name: Crusoe
+  ats: ashby
+  slug: crusoe
+- name: Lambda
+  ats: ashby
+  slug: lambda
+- name: Replit
+  ats: ashby
+  slug: replit
+- name: Campfire
+  ats: ashby
+  slug: campfire
+
+# ---------------------------------------------------------------- healthcare / biotech
+- name: Ro
+  ats: lever
+  slug: ro
+- name: Zocdoc
+  ats: greenhouse
+  slug: zocdoc
+
+# ---------------------------------------------------------------- retail / ecommerce / logistics
+- name: Instacart
+  ats: greenhouse
+  slug: instacart
+- name: Faire
+  ats: greenhouse
+  slug: faire
+- name: Flexport
+  ats: greenhouse
+  slug: flexport
+- name: Gopuff
+  ats: lever
+  slug: gopuff
+
+# ---------------------------------------------------------------- gaming
+- name: Roblox
+  ats: greenhouse
+  slug: roblox
+- name: Epic Games
+  ats: greenhouse
+  slug: epicgames
+- name: Riot Games
+  ats: greenhouse
+  slug: riotgames
+- name: Scopely
+  ats: greenhouse
+  slug: scopely
+
+# ---------------------------------------------------------------- autonomous / hardware
+- name: Nuro
+  ats: greenhouse
+  slug: nuro
+- name: Waymo
+  ats: greenhouse
+  slug: waymo
+- name: Western Digital
+  ats: smartrecruiters
+  slug: WesternDigital
+
+# ---------------------------------------------------------------- education
+- name: Coursera
+  ats: greenhouse
+  slug: coursera
+- name: Udemy
+  ats: greenhouse
+  slug: udemy
+- name: Duolingo
+  ats: greenhouse
+  slug: duolingo
+- name: Khan Academy
+  ats: greenhouse
+  slug: khanacademy
+
+# ---------------------------------------------------------------- Indian tech (primary user is India-based)
+- name: Razorpay
+  ats: greenhouse
+  slug: razorpaysoftwareprivatelimited
+- name: CRED
+  ats: lever
+  slug: cred
+- name: Groww
+  ats: greenhouse
+  slug: groww
+- name: Meesho
+  ats: lever
+  slug: meesho
+
+# ---------------------------------------------------------------- other / global enterprise
+- name: ByteDance
+  ats: smartrecruiters
+  slug: Bytedance
+- name: Blueground
+  ats: workable
+  slug: blueground

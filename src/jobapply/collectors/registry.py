@@ -60,6 +60,14 @@ class SearchConfig:
     linkedin: dict[str, Any] = field(default_factory=dict)
     # Hot-polling tier (see hot_collectors): {companies: [...], linkedin: true, linkedin_minutes_old: 15}.
     hot: dict[str, Any] = field(default_factory=dict)
+    # Breadth mode: when true (default) the query-based collectors (LinkedIn guest, keyed aggregators) run
+    # over the whole taxonomy (roles.search_queries()) instead of only the active users' roles, so the
+    # shared pool covers every sector. A rotating slice of `broad_queries_per_run` queries runs each time
+    # (cycling through the full set across successive runs) to stay within LinkedIn rate limits. Per-user
+    # assignment still filters each user to their own roles, so a broad pool + per-user filters means each
+    # user still sees only their roles.
+    broad: bool = True
+    broad_queries_per_run: int = 12
 
 
 _LINKEDIN_INTS = {"minutes_old": 60, "max_results": 50, "max_details": 40, "max_requests": DEFAULT_MAX_REQUESTS}

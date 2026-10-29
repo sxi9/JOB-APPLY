@@ -14,6 +14,7 @@ from jobapply.roles.taxonomy import (
     all_fields,
     field,
     match_title,
+    search_queries,
     subrole,
     titles_for,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "all_fields",
     "field",
     "match_title",
+    "search_queries",
     "subrole",
     "titles_for",
 ]

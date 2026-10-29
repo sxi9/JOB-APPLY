@@ -140,6 +140,19 @@ def detect_companies_cmd() -> None:
 
 
 @app.command()
+def coverage() -> None:
+    """Print how well the shared job pool covers the taxonomy: totals, by source, by sector, recency."""
+    import json
+
+    from jobapply.db import session_scope
+    from jobapply.pipeline.collect import coverage_stats
+
+    with session_scope() as session:
+        stats = coverage_stats(session)
+    typer.echo(json.dumps(stats, indent=2, sort_keys=True))
+
+
+@app.command()
 def refilter() -> None:
     """Re-run every user's filters over recent jobs (after filters change)."""
     from jobapply.db import session_scope

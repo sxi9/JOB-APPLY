@@ -484,6 +484,40 @@ def titles_for(selection: Iterable[str]) -> set[str]:
     return out
 
 
+def _query_for_subrole(sr: SubRole) -> str | None:
+    """A representative search query for a sub-role: the first multi-word, non-acronym title synonym
+    (so a LinkedIn/aggregator keyword search gets a real phrase, not "sde" or "cti"), else the first title."""
+    for t in sr.titles:
+        if " " in t and len(t) > 4:
+            return t
+    return sr.titles[0] if sr.titles else None
+
+
+def search_queries(fields: Iterable[str] | None = None, per_field: int = 3) -> list[str]:
+    """A deduped, representative set of job-title search queries spanning the taxonomy.
+
+    This is the *breadth* query set that makes the shared job pool cover every sector: for each field
+    (all of them when `fields` is None), up to `per_field` representative sub-role queries are taken, in
+    taxonomy order, de-duplicated across the whole result. Pure and deterministic, so it is safe to drive
+    the broad collect mode and to test directly.
+    """
+    selected = all_fields() if not fields else [f for k in fields if (f := field(k)) is not None]
+    n = max(0, int(per_field))
+    out: list[str] = []
+    seen: set[str] = set()
+    for fld in selected:
+        taken = 0
+        for sr in fld.subroles:
+            if taken >= n:
+                break
+            q = _query_for_subrole(sr)
+            if q and q not in seen:
+                seen.add(q)
+                out.append(q)
+                taken += 1
+    return out
+
+
 @lru_cache(maxsize=4096)
 def _phrase_re(needle: str) -> re.Pattern[str]:
     # Word-boundary match of a whole phrase: "threat intelligence" must appear as those adjacent words.

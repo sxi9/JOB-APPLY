@@ -358,7 +358,22 @@ class LinkedInGuestCollector(BaseCollector):
         self.skip_if, self.on_rate_limited = skip_if, on_rate_limited
         self.rate_limited = False
         self.budget_exhausted = False
+        # Set once the search phase has used its reserved slice of the budget (see _search_budget): the
+        # search phase stops there, but enrich() may still spend the reserved remainder on posting pages.
+        self.search_budget_reached = False
+        self._in_search = True
         self.requests_made = 0
+
+    @property
+    def _search_budget(self) -> int:
+        """Request budget for the search phase alone, so a wide query set cannot spend the whole budget on
+        search pages and leave every job un-enriched (a bare /jobs/view link, no ATS type, Easy Apply
+        unresolved). Reserve room for detail fetches only when the budget comfortably exceeds the detail
+        cap; small or explicit budgets keep the full budget for search so their behaviour is unchanged."""
+        if self.with_details and self.max_details > 0 and self.max_requests > self.max_details:
+            reserve = min(self.max_details, self.max_requests // 3)
+            return max(1, self.max_requests - reserve)
+        return self.max_requests
 
     @property
     def client(self) -> httpx.Client:
@@ -408,6 +423,12 @@ class LinkedInGuestCollector(BaseCollector):
         """GET with politeness delay and budget. Returns the body, or None when blocked, exhausted or missing."""
         if self.rate_limited:
             return None
+        if self._in_search and self._search_budget < self.max_requests and self.requests_made >= self._search_budget:
+            if not self.search_budget_reached:
+                self.search_budget_reached = True
+                self.log.info("linkedin search budget reached, reserving the rest for detail fetches",
+                              search_budget=self._search_budget, max_requests=self.max_requests)
+            return None
         if self.requests_made >= self.max_requests:
             if not self.budget_exhausted:
                 self.budget_exhausted = True
@@ -450,7 +471,8 @@ class LinkedInGuestCollector(BaseCollector):
     def search(self, query: str) -> list[NormalizedJob]:
         found: dict[str, NormalizedJob] = {}
         start = 0
-        while len(found) < self.max_results and not self.rate_limited and not self.budget_exhausted:
+        while (len(found) < self.max_results and not self.rate_limited and not self.budget_exhausted
+               and not self.search_budget_reached):
             page = self.fetch_page(query, start)
             if not page:
                 break
@@ -465,6 +487,7 @@ class LinkedInGuestCollector(BaseCollector):
         return list(found.values())[: self.max_results]
 
     def enrich(self, jobs: list[NormalizedJob]) -> list[NormalizedJob]:
+        self._in_search = False  # the reserved remainder of the budget is now available for posting pages
         out, fetched = [], 0
         for job in jobs:
             if fetched >= self.max_details or self.rate_limited or self.budget_exhausted:
@@ -483,7 +506,7 @@ class LinkedInGuestCollector(BaseCollector):
             return []
         seen: dict[str, NormalizedJob] = {}
         for query in self.queries:
-            if self.rate_limited or self.budget_exhausted:
+            if self.rate_limited or self.budget_exhausted or self.search_budget_reached:
                 break
             for job in self.search(query):
                 seen.setdefault(job.source_id, job)

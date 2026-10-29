@@ -180,6 +180,31 @@ def test_registry_builds_and_detects(tmp_path):
     assert [c.key for c in build_collectors(s, companies, SearchConfig(feeds=[]), only=["ashby"])] == ["ashby:notion"]
 
 
+def test_lever_flags_stale_evergreen_posting_without_faking_date():
+    from datetime import UTC, datetime, timedelta
+
+    from jobapply.collectors.ats import LeverCollector, is_stale_posting
+
+    c = LeverCollector("acme", "Acme")
+    old_ms = int((datetime.now(UTC) - timedelta(days=2906)).timestamp() * 1000)  # "2906 d ago" evergreen req
+    fresh_ms = int((datetime.now(UTC) - timedelta(days=3)).timestamp() * 1000)
+
+    stale = c.parse({"id": "1", "text": "Staff Engineer", "createdAt": old_ms,
+                     "categories": {"location": "Remote"}})
+    fresh = c.parse({"id": "2", "text": "Staff Engineer", "createdAt": fresh_ms,
+                     "categories": {"location": "Remote"}})
+
+    # The real date is preserved (not faked), but the stale one is flagged in the stored source raw.
+    assert stale.posted_at is not None and stale.posted_at.year < datetime.now(UTC).year
+    assert stale.raw.get("stale_posting") is True
+    assert "stale_posting" not in fresh.raw and fresh.posted_at is not None
+    # The helper matches the default window (365d) and is overridable.
+    assert is_stale_posting(stale.posted_at) is True
+    assert is_stale_posting(fresh.posted_at) is False
+    assert is_stale_posting(stale.posted_at, max_days=10000) is False
+    assert is_stale_posting(None) is False
+
+
 def test_helpers():
     assert parse_dt(1786469891368).year == 2026
     assert parse_dt("2026-05-29").tzinfo is not None

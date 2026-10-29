@@ -5,6 +5,16 @@ queries:
   - backend engineer
 location: ""
 hours_old: 24
+# Breadth mode: when true (default), the query-based collectors run over the WHOLE role taxonomy
+# (roles.search_queries()) so the shared pool covers every sector, not just a few companies. A rotating
+# slice of `broad_queries_per_run` queries runs each collect (cycling through the full set across runs via
+# a stored offset) to respect LinkedIn rate limits. Per-user filters still narrow each user to their roles.
+# Budget interaction: these broad queries are fed to the LinkedIn guest collector, which has a per-run
+# request budget (linkedin.max_requests). The collector reserves part of that budget for posting-detail
+# fetches (offsite apply URL, ATS type, Easy Apply flag), so more broad queries means fewer search pages
+# per query, not starved enrichment. Keep broad_queries_per_run modest relative to linkedin.max_requests.
+broad: true
+broad_queries_per_run: 12
 # Public feeds polled every run.
 feeds: [remotive, remoteok, jobicy, arbeitnow, themuse, hn]
 # Needs `uv sync --extra jobspy`. Indeed, LinkedIn guest search, Glassdoor, ZipRecruiter.
@@ -21,7 +31,9 @@ linkedin:
   easy_apply_only: false   # f_AL=true; the server filter is trusted, a fetched posting page can overrule it
   max_results: 50          # per query, 10 per page
   max_details: 40          # posting pages fetched per run (description, direct apply link, Easy Apply flag)
-  max_requests: 60         # search + posting requests per run, over all queries; the run stops politely there
+  max_requests: 60         # search + posting requests per run, over all queries; the run stops politely there.
+                           # A slice is reserved for posting-detail fetches so a wide broad query set still
+                           # resolves apply URLs / ATS / Easy Apply instead of storing bare /jobs/view links.
 # A 429/999 or an authwall redirect records app_settings.linkedin_guest_cooldown_until (2 h, doubling on
 # repeats); the guest collector also stays off while any user's LinkedIn challenge cooldown is active.
 # Hot-polling tier: a second collect task (JOBAPPLY_HOT_INTERVAL_MINUTES, default 5) that runs ONLY the

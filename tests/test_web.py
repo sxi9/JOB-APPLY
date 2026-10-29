@@ -13,6 +13,7 @@ PAGES = [
     "/",
     "/jobs",
     "/jobs?scope=all&hours=24&remote=1&q=engineer&sort=score",
+    "/coverage",
     "/queue",
     "/applications",
     "/applications?status=interview",
@@ -482,6 +483,62 @@ def test_login_offers_signup_and_new_user_is_nudged(client, engine):
     assert "Finish setup" in client.get("/").text
     with Session(engine) as s:
         assert s.exec(select(User).where(User.username == "freshone")).one().role == "user"
+
+
+def test_coverage_view_shows_pool_sectors_and_matched_vs_total(client, engine):
+    login(client, "demo", "demo1234")
+    page = client.get("/coverage").text
+    assert page.count("{{") == 0
+
+    # Pool and per-user match counts are both non-zero with the seeded data.
+    with Session(engine) as s:
+        demo = s.exec(select(User).where(User.username == "demo")).one()
+        total = s.exec(select(Job)).all()
+        matched = s.exec(select(Application).where(Application.user_id == demo.id)).all()
+    assert len(total) > 0 and 0 < len(matched) < len(total)
+
+    # The matched-vs-total line answers "why so few jobs" on-screen.
+    assert "match your filters of" in page
+    assert str(len(total)) in page and str(len(matched)) in page
+
+    # A breakdown by sector (taxonomy) with at least one non-empty bucket, and a breakdown by source.
+    assert "By sector" in page and "By source" in page
+    assert "Software Engineering" in page  # seeded titles land in this field
+    from jobapply.web.routes.coverage import sector_counts
+
+    with Session(engine) as s:
+        counts = dict(sector_counts(s))
+    # Assert the Software Engineering bucket itself is non-zero, not just that the always-present label is on
+    # the page: sector_counts emits every taxonomy field (including zero-count ones), so the label alone
+    # would still render even if the seeded SE titles stopped matching.
+    assert counts["Software Engineering"] > 0
+    assert "greenhouse" in page and "lever" in page  # seeded sources appear
+
+
+def test_coverage_is_empty_safe(engine, monkeypatch):
+    # No seed: the pool is empty. The page must still render (no divide-by-zero) and show a zero pool.
+    monkeypatch.setenv("JOBAPPLY_VAULT_KEY", "Jl0tE_KZf7aYyq3W_e7u6bSJ5l1W9mY2y5V7q9cN6uM=")
+    from jobapply.config import get_settings
+
+    get_settings.cache_clear()
+    with Session(engine) as s:
+        admin = create_user(s, "solo", "longpassword1")
+        s.commit()
+        admin_id = admin.id
+    app = create_app(engine=engine, secret_key="test-secret")
+    with TestClient(app, follow_redirects=False) as c:
+        page = c.get("/login").text
+        csrf = re.search(r'name="csrf" value="([^"]+)"', page).group(1)
+        c.post("/login", data={"username": "solo", "password": "longpassword1", "csrf": csrf, "next": "/"})
+        resp = c.get("/coverage")
+    assert resp.status_code == 200
+    # Renders with a zero pool: the matched-vs-total line is present, the pool-empty hint shows, and the
+    # source breakdown (which has no rows) falls back to its empty state instead of a divide-by-zero.
+    assert "match your filters of" in resp.text
+    assert "The pool is empty so far." in resp.text
+    assert "No collector sources yet." in resp.text
+    assert admin_id is not None
+    get_settings.cache_clear()
 
 
 def test_settings_saves_role_selection(client, engine):

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Coverage · JOB-APPLY{% endblock %}
+{% block content %}
+<h1>Coverage</h1>
+
+<section class="tiles">
+  {% for name, value, href in tiles %}
+  <a class="card tile" href="{{ href }}"><div class="num">{{ value }}</div><div class="lbl">{{ name }}</div></a>
+  {% endfor %}
+</section>
+
+<section class="card" style="margin-top:16px">
+  <p style="margin:0">
+    <strong>{{ matched }}</strong> match your filters of <strong>{{ total }}</strong> total in the pool.
+  </p>
+  <p class="muted small" style="margin:.4rem 0 0">
+    {% if total and matched < total %}
+    Seeing only a few jobs? That is your filters narrowing a large pool, not an empty pool — widen your
+    roles, locations or age window in <a href="/settings">Settings</a> to match more.
+    {% elif not total %}
+    The pool is empty so far. Once collectors run, jobs will show up here.
+    {% else %}
+    Your filters match the whole pool.
+    {% endif %}
+  </p>
+</section>
+
+<div class="grid grid-2" style="margin-top:16px">
+  <section class="card">
+    <h2>By sector</h2>
+    <p class="muted small" style="margin:-.4rem 0 .75rem">Pool jobs whose title matches each career field.</p>
+    {% if sectors %}
+    {% for label, count in sectors %}
+    <div class="funnel-row"><span class="muted" style="width:auto">{{ label }}</span>
+      <div class="bar"><span style="width: {{ (100 * count / sector_max) | round(1) if sector_max else 0 }}%"></span></div>
+      <strong style="text-align:right">{{ count }}</strong></div>
+    {% endfor %}
+    {% else %}<p class="empty">No jobs in the pool yet.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>By source</h2>
+    <p class="muted small" style="margin:-.4rem 0 .75rem">Where the pool was collected from.</p>
+    {% if by_source %}
+    <div class="table-wrap"><table>
+      <tr><th>Source</th><th></th><th style="text-align:right">Jobs</th></tr>
+      {% for src, count in by_source %}
+      <tr>
+        <td class="mono">{{ src }}</td>
+        <td><div class="bar"><span style="width: {{ (100 * count / source_max) | round(1) if source_max else 0 }}%"></span></div></td>
+        <td style="text-align:right"><strong>{{ count }}</strong></td>
+      </tr>
+      {% endfor %}
+    </table></div>
+    {% else %}<p class="empty">No collector sources yet.</p>{% endif %}
+  </section>
+</div>
+{% endblock %}
