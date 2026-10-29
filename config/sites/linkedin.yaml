@@ -1,0 +1,30 @@
+# LinkedIn Easy Apply selectors. Selectors only, no vault keys: the filler in
+# jobapply.sites.linkedin.easy_apply maps fields by their label text. Fix a selector here when
+# LinkedIn changes its markup; no code change is needed. Every entry may be a comma-separated list
+# of CSS selectors; the first one that matches is used.
+#
+# This file lives under config/sites/ on purpose: config/form_profiles/ is reserved for ATS form
+# profiles and every *.yaml there is loaded as one.
+site: linkedin
+selectors:
+  # Easy Apply only: the offsite "Apply" button shares button.jobs-apply-button, its aria-label says
+  # "Apply to X on company website". The runner also reads the button text before clicking.
+  easy_apply_button: 'button.jobs-apply-button[aria-label*="Easy Apply"], button[aria-label*="Easy Apply"], button[data-control-name="jobdetails_topcard_inapply"]'
+  # No bare [data-test-modal]: share / save / messaging overlays carry it too. The runner picks the first
+  # VISIBLE match and tags it data-jobapply-modal for the in-page lookups.
+  modal: 'div.jobs-easy-apply-modal, div.jobs-easy-apply-modal[data-test-modal], div.jobs-easy-apply-content'
+  next: 'button[aria-label="Continue to next step"], footer button[data-easy-apply-next-button], button[data-live-test-easy-apply-next-button]'
+  review: 'button[aria-label="Review your application"], button[data-live-test-easy-apply-review-button]'
+  submit: 'button[aria-label="Submit application"], button[data-live-test-easy-apply-submit-button]'
+  dismiss: 'button[aria-label="Dismiss"], button.artdeco-modal__dismiss'
+  discard: 'button[data-control-name="discard_application_confirm_btn"], button[data-test-dialog-primary-btn]'
+  resume_upload: 'input[type=file]'
+  uploaded_resume_card: '.jobs-document-upload-redesign-card__container, .jobs-document-upload__card, [data-test-document-upload-card]'
+  error: '.artdeco-inline-feedback--error, [data-test-form-element-error-message], .fb-form-element__error-text'
+  follow_company_checkbox: 'input#follow-company-checkbox, input[name="follow-company"]'
+  progress: 'progress, [role=progressbar]'
+  # Things that mean the account is being challenged rather than shown the job.
+  security_check: 'iframe[src*="captcha"], #captcha-internal, form#captcha-challenge, [data-test-id="challenge"]'
+  # Button on the "Application sent" dialog after a real submit.
+  post_submit_done: 'button[aria-label="Dismiss"], button[data-control-name="post_apply_done_btn"]'
+  already_applied: '.artdeco-inline-feedback--success, span.jobs-s-apply__application-link'

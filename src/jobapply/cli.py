@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import typer
 
+from jobapply.cli_linkedin import linkedin_app
 from jobapply.config import get_settings
 from jobapply.logs import configure_logging, get_logger
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 db_app = typer.Typer(no_args_is_help=True, help="Database commands")
 app.add_typer(db_app, name="db")
+app.add_typer(linkedin_app, name="linkedin")
 log = get_logger("jobapply.cli")
 
 

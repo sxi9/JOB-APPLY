@@ -1,0 +1,27 @@
+<!-- Synthetic (2026-10-29): offsite apply with the direct URL in <code id="applyUrl"> as the
+     logged-in job page renders it: LinkedIn wraps the target in its externalApply redirect,
+     /jobs/view/externalApply/<id>?url=<percent-encoded target>&urlHash=... (jobspy unwraps the same way).
+     The guest endpoint hid it behind a sign-in modal during recording. -->
+<section class="top-card-layout">
+  <a href="https://www.linkedin.com/jobs/view/platform-engineer-at-stripe-4480000002" data-tracking-control-name="public_jobs_topcard-title" class="topcard__link">
+    <h2 class="top-card-layout__title topcard__title">Platform Engineer</h2>
+  </a>
+  <span class="topcard__flavor">
+    <a class="topcard__org-name-link topcard__flavor--black-link" data-tracking-control-name="public_jobs_topcard-org-name" href="https://www.linkedin.com/company/stripe">Stripe</a>
+  </span>
+  <span class="topcard__flavor topcard__flavor--bullet">Bengaluru, Karnataka, India</span>
+  <span class="posted-time-ago__text topcard__flavor--metadata">3 hours ago</span>
+  <button class="apply-button apply-button--default top-card-layout__cta top-card-layout__cta--primary btn-md btn-primary" data-tracking-control-name="public_jobs_apply-link-offsite_sign-up-modal" data-modal="job-details-topcard-apply-modal">
+    Apply
+    <icon data-svg-class-name="apply-button__offsite-apply-icon-svg"></icon>
+  </button>
+</section>
+<code id="applyUrl" style="display: none"><!--"https://www.linkedin.com/jobs/view/externalApply/4480000002?url=https%3A%2F%2Fboards%2Egreenhouse%2Eio%2Fstripe%2Fjobs%2F6543210%3Fgh_src%3Dlinkedin&amp;urlHash=AbCd&amp;trk=public_jobs_apply-link-offsite"--></code>
+<div class="description__text description__text--rich">
+  <section class="show-more-less-html" data-max-lines="5">
+    <div class="show-more-less-html__markup relative overflow-hidden">
+      <p>Own the deploy pipeline for a Python monorepo.</p>
+    </div>
+    <button class="show-more-less-html__button" data-tracking-control-name="public_jobs_show-more-html-btn">Show more</button>
+  </section>
+</div>

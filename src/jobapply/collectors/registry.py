@@ -25,6 +25,7 @@ from jobapply.collectors.hn import HNWhoIsHiringCollector
 from jobapply.collectors.jobspy_adapter import JOBSPY_SITES, JobSpyCollector
 from jobapply.config import Settings, get_settings
 from jobapply.logs import get_logger
+from jobapply.sites.linkedin.search import DEFAULT_MAX_REQUESTS, LinkedInGuestCollector
 
 log = get_logger(__name__)
 
@@ -53,6 +54,48 @@ class SearchConfig:
     hours_old: int = 24
     feeds: list[str] = field(default_factory=lambda: list(FEED_COLLECTORS))
     jobspy_sites: list[str] = field(default_factory=list)
+    # LinkedIn guest search: enabled, minutes_old, location, geo_id, remote_only,
+    # easy_apply_only, max_results, max_details, max_requests (see config/searches.yaml).
+    linkedin: dict[str, Any] = field(default_factory=dict)
+
+
+_LINKEDIN_INTS = {"minutes_old": 60, "max_results": 50, "max_details": 40, "max_requests": DEFAULT_MAX_REQUESTS}
+
+
+def linkedin_options(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Validated keyword arguments for LinkedInGuestCollector from the `linkedin:` block, or None when the
+    block is off or malformed (logged; the other collectors still run)."""
+    li = raw or {}
+    if not li.get("enabled"):
+        return None
+    opts: dict[str, Any] = {"location": str(li.get("location") or ""), "remote_only": bool(li.get("remote_only")),
+                            "easy_apply_only": bool(li.get("easy_apply_only")), "geo_id": li.get("geo_id")}
+    for key, default in _LINKEDIN_INTS.items():
+        value = li.get(key)
+        try:
+            opts[key] = int(value) if value not in (None, "") else default
+        except (TypeError, ValueError):
+            log.warning("bad linkedin setting in searches.yaml, linkedin guest search disabled", key=key,
+                        value=value)
+            return None
+    return opts
+
+
+def _guest_cooldown_active() -> bool:
+    from jobapply.db import session_scope
+    from jobapply.sites.linkedin.search import guest_cooldown_active
+
+    with session_scope() as session:
+        return guest_cooldown_active(session)
+
+
+def _record_guest_cooldown(hours: float) -> None:
+    from jobapply.db import session_scope
+    from jobapply.sites.linkedin.search import set_guest_cooldown
+
+    with session_scope() as session:
+        until = set_guest_cooldown(session, hours)
+    log.warning("linkedin guest search paused", until=until.isoformat())
 
 
 def load_companies(path: Path) -> list[Company]:
@@ -122,6 +165,18 @@ def build_collectors(
                                        s.adzuna_country, max_days_old=max(1, searches.hours_old // 24)))
         if s.rapidapi_key:
             out.append(JSearchCollector(s.rapidapi_key.get_secret_value(), queries))
+        li = linkedin_options(searches.linkedin)
+        if li:
+            if "linkedin" in searches.jobspy_sites:
+                # jobspy stores source_id "li-<id>", the guest collector "<id>": the same posting gets two
+                # JobSource rows. Run one of them.
+                log.warning("both jobspy linkedin and the linkedin guest collector are enabled; "
+                            "each posting will get two source rows, enable only one")
+            minutes_old = li.pop("minutes_old")
+            out.append(LinkedInGuestCollector(
+                queries, minutes_old=minutes_old, shuffle_queries=True,
+                skip_if=_guest_cooldown_active, on_rate_limited=_record_guest_cooldown, **li,
+            ))
     if only:
         out = [c for c in out if c.source in only or c.key in only]
     return out

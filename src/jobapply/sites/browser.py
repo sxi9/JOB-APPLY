@@ -1,0 +1,143 @@
+"""Persistent browser profiles for assisted sites (LinkedIn, Naukri, ...).
+
+One Chromium user-data directory per user per site keeps the login between runs, so the user signs
+in once in a visible window and later runs reuse the cookies. `launch_persistent_context` needs the
+full Chromium build (`uv run playwright install chromium`), not the headless shell; when the bundled
+build is missing we fall back to the system Chrome (`channel="chrome"`).
+"""
+
+from __future__ import annotations
+
+import random
+import re
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from jobapply.config import get_settings
+from jobapply.logs import get_logger
+
+log = get_logger(__name__)
+
+# A current desktop Chrome on Windows. Used by the guest search client (sites.linkedin.search) so the
+# plain-HTTP path advertises the same browser family as the real profile; the persistent context itself
+# runs with the bundled Chromium's own user agent so navigator.userAgentData / Sec-CH-UA never contradict it.
+DESKTOP_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/143.0.0.0 Safari/537.36"
+)
+
+_LAUNCH_ARGS = [
+    "--disable-blink-features=AutomationControlled",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-infobars",
+]
+
+
+def profile_dir(user_id: int, site: str) -> Path:
+    """`<data_dir>/browser-profiles/<user_id>/<site>`, created on first use."""
+    if not re.fullmatch(r"[a-z0-9_-]+", site):
+        raise ValueError(f"bad site key {site!r}")
+    path = get_settings().browser_profiles_dir / str(int(user_id)) / site
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def machine_timezone() -> str:
+    """IANA name of the machine's timezone, falling back to UTC when it cannot be resolved."""
+    try:
+        import tzlocal  # type: ignore[import-not-found]
+
+        name = tzlocal.get_localzone_name()
+        if name:
+            return name
+    except Exception:  # noqa: BLE001 - optional dependency
+        pass
+    key = getattr(datetime.now().astimezone().tzinfo, "key", None)
+    if key:
+        return str(key)
+    return "UTC"
+
+
+def launch_persistent(pw: Any, user_id: int, site: str, headless: bool | None = None,
+                      viewport: tuple[int, int] = (1280, 900)):
+    """Open (or reuse) the persistent profile for `user_id`/`site` and return the BrowserContext.
+
+    `headless=None` reads `JOBAPPLY_<SITE>_HEADLESS` (LinkedIn: `linkedin_headless`), default visible.
+    Headless runs use the full Chromium build in its new headless mode (`channel="chromium"`) rather than
+    the separately fingerprinted headless shell, so headed and headless sessions share one binary and UA.
+    """
+    settings = get_settings()
+    if headless is None:
+        headless = bool(getattr(settings, f"{site}_headless", False))
+    user_data = profile_dir(user_id, site)
+    kwargs: dict[str, Any] = {
+        "user_data_dir": str(user_data),
+        "headless": headless,
+        "viewport": {"width": viewport[0], "height": viewport[1]},
+        "locale": "en-US",
+        "timezone_id": machine_timezone(),
+        "args": list(_LAUNCH_ARGS),
+        "ignore_default_args": ["--enable-automation"],
+    }
+    if settings.chromium_executable:
+        kwargs["executable_path"] = settings.chromium_executable
+    elif headless:
+        kwargs["channel"] = "chromium"
+    try:
+        context = pw.chromium.launch_persistent_context(**kwargs)
+    except Exception as exc:  # noqa: BLE001 - Playwright raises its own Error subclasses
+        if "executable_path" in kwargs or "doesn't exist" not in str(exc).lower():
+            raise
+        # Only chromium_headless_shell is installed: use the system Chrome instead.
+        log.warning("bundled chromium missing, using system chrome; run `uv run playwright install chromium`",
+                    error=str(exc).splitlines()[0])
+        kwargs["channel"] = "chrome"
+        context = pw.chromium.launch_persistent_context(**kwargs)
+    context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
+    log.info("browser profile opened", user_id=user_id, site=site, headless=headless, profile=str(user_data))
+    return context
+
+
+def human_pause(page: Any, lo_ms: int = 400, hi_ms: int = 1500) -> int:
+    """Sleep a random, jittered interval so actions do not fire at machine speed. Returns the ms slept."""
+    lo, hi = sorted((max(0, int(lo_ms)), max(0, int(hi_ms))))
+    ms = random.randint(lo, hi) if hi > lo else lo
+    waiter = getattr(page, "wait_for_timeout", None)
+    if callable(waiter):
+        waiter(ms)
+    else:
+        time.sleep(ms / 1000)
+    return ms
+
+
+_HOURS_RE = re.compile(r"^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$")
+
+
+def parse_active_hours(spec: str) -> tuple[int, int]:
+    """`"08:00-23:00"` -> start and end minutes since midnight."""
+    m = _HOURS_RE.match(spec or "")
+    if not m:
+        raise ValueError(f"active hours must look like HH:MM-HH:MM, got {spec!r}")
+    h1, m1, h2, m2 = (int(x) for x in m.groups())
+    if not (0 <= h1 <= 24 and 0 <= h2 <= 24 and m1 < 60 and m2 < 60):
+        raise ValueError(f"bad time in {spec!r}")
+    return h1 * 60 + m1, h2 * 60 + m2
+
+
+def is_active_hours(now: datetime | None = None, spec: str = "08:00-23:00") -> bool:
+    """True when `now` (local time) falls inside the window. A window ending before it starts wraps midnight."""
+    start, end = parse_active_hours(spec)
+    now = now or datetime.now()
+    cur = now.hour * 60 + now.minute
+    if start == end:
+        return True
+    if start < end:
+        return start <= cur < end
+    return cur >= start or cur < end
+
+
+__all__ = ["profile_dir", "launch_persistent", "human_pause", "is_active_hours", "parse_active_hours",
+           "machine_timezone", "DESKTOP_USER_AGENT"]

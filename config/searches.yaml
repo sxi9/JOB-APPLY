@@ -1,4 +1,4 @@
-# Search terms for query-based sources (jobspy sites, Adzuna, JSearch).
+# Search terms for query-based sources (jobspy sites, Adzuna, JSearch, LinkedIn guest search).
 # Each active user's filters.roles are added to these at collect time.
 queries:
   - python developer
@@ -9,3 +9,18 @@ hours_old: 24
 feeds: [remotive, remoteok, jobicy, arbeitnow, themuse, hn]
 # Needs `uv sync --extra jobspy`. Indeed, LinkedIn guest search, Glassdoor, ZipRecruiter.
 jobspy_sites: []
+# LinkedIn guest search (no login, no extra dependency): the public endpoint the logged-out
+# jobs page uses. Age is in MINUTES so a 30-minute collect interval only sees fresh postings.
+# Guests get rate limited (HTTP 429/999); keep max_results and max_details modest.
+linkedin:
+  enabled: false
+  minutes_old: 60          # f_TPR, minimum 1
+  location: "India"        # free text; geo_id below is more precise when set
+  geo_id: null             # e.g. 102713980 for India, 92000000 for Worldwide
+  remote_only: false       # f_WT=2
+  easy_apply_only: false   # f_AL=true; the server filter is trusted, a fetched posting page can overrule it
+  max_results: 50          # per query, 10 per page
+  max_details: 40          # posting pages fetched per run (description, direct apply link, Easy Apply flag)
+  max_requests: 60         # search + posting requests per run, over all queries; the run stops politely there
+# A 429/999 or an authwall redirect records app_settings.linkedin_guest_cooldown_until (2 h, doubling on
+# repeats); the guest collector also stays off while any user's LinkedIn challenge cooldown is active.

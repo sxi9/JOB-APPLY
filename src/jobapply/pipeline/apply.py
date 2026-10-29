@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
@@ -31,6 +31,10 @@ from jobapply.switches import global_dry_run, kill_switch_on
 log = get_logger(__name__)
 
 APPLY_STATUSES = (AppStatus.approved, AppStatus.queued)
+# Sites with their own filler running inside the user's logged-in browser profile. `apply_user` leaves these
+# alone; `jobapply linkedin apply` (the only entry point until a scheduler task lands) calls
+# `jobapply.sites.linkedin.easy_apply`.
+ASSISTED_SITES = {"linkedin"}
 
 
 @dataclass
@@ -53,7 +57,8 @@ def applied_today(session: Session, user_id: int, site: str | None = None) -> in
         .where(Application.user_id == user_id, Application.submitted_at >= today)
     )
     if site:
-        stmt = stmt.where(Job.ats_type == site)
+        # ATS jobs carry ats_type; assisted-site jobs (LinkedIn Easy Apply) have no ATS and keep source = site.
+        stmt = stmt.where(or_(Job.ats_type == site, and_(Job.ats_type.is_(None), Job.source == site)))
     return session.exec(stmt).one()
 
 
@@ -65,8 +70,13 @@ def pick_applications(session: Session, user: User, limit: int) -> list[tuple[Ap
     rows.sort(key=lambda r: (r[0].status != AppStatus.approved, -(r[0].score or 0)))
     sites = {s.site: s for s in scope.sites()}
     out = []
+    skipped_assisted = 0
     for app, job in rows:
-        site = sites.get(site_for_job(job))
+        site_key = site_for_job(job)
+        if site_key in ASSISTED_SITES:
+            skipped_assisted += 1
+            continue
+        site = sites.get(site_key)
         if site is None or not site.enabled:
             continue
         if not job.apply_url or job.apply_url.startswith("mailto:"):
@@ -74,29 +84,23 @@ def pick_applications(session: Session, user: User, limit: int) -> list[tuple[Ap
         out.append((app, job, site))
         if len(out) >= limit:
             break
+    if skipped_assisted:
+        log.info(
+            "assisted-site applications left for their own filler",
+            user=user.username, count=skipped_assisted,
+            hint="run `jobapply linkedin apply` (no scheduler task yet)",
+        )
     return out
 
 
-def run_one(
-    session: Session, user: User, app: Application, job: Job, site: UserSite, page, llm: LLM | None, dry_run: bool
+def record_outcome(
+    session: Session, user: User, app: Application, job: Job, result: FillResult | None, error: str | None = None
 ) -> ApplyOutcome:
+    """Turn a filler result (or a crash) into the application's status, events and alerts. Shared by the ATS
+    `run_one` path and the LinkedIn Easy Apply path."""
     scope = UserScope(session, user)
-    s = get_settings()
-    vault = vault_view_for(user, app)
-    runner = FormRunner(session, vault, answers=AnswerSource(session, llm, user, job), llm=llm, user=user)
-    shot = s.screenshots_dir / str(user.id) / f"{app.id}-{utcnow().strftime('%Y%m%d%H%M%S')}.png"
-    submit = (
-        not dry_run
-        and site.auto_submit
-        and app.status == AppStatus.approved
-        or (not dry_run and site.auto_submit and app.status == AppStatus.queued)
-    )
-    try:
-        result: FillResult = runner.run(
-            page, url=job.apply_url, ats_hint=job.ats_type, submit=submit, screenshot_path=shot
-        )
-    except Exception as exc:  # browser errors: timeouts, navigation failures
-        app.error = f"{type(exc).__name__}: {exc}"[:500]
+    if result is None:
+        app.error = (error or "filler failed")[:500]
         scope.set_status(app, AppStatus.failed, app.error)
         return ApplyOutcome(app.id, AppStatus.failed, app.error)
 
@@ -116,7 +120,10 @@ def run_one(
     if result.paused_reason:
         app.error = "; ".join([result.paused_reason, *result.needs_human[:3], *result.unfilled_required[:3]])[:500]
         scope.set_status(app, AppStatus.paused, detail)
-        notify(session, user, "paused", f"{job.title} at {job.company}: {result.paused_reason}")
+        try:
+            notify(session, user, "paused", f"{job.title} at {job.company}: {result.paused_reason}")
+        except Exception as exc:  # noqa: BLE001 - a notifier failure must not undo a recorded outcome
+            log.warning("notification failed", user=user.username, error=str(exc)[:200])
         return ApplyOutcome(app.id, AppStatus.paused, detail)
     if result.error:
         app.error = result.error
@@ -124,6 +131,28 @@ def run_one(
         return ApplyOutcome(app.id, AppStatus.failed, result.error)
     scope.set_status(app, AppStatus.dry_run, detail)
     return ApplyOutcome(app.id, AppStatus.dry_run, detail)
+
+
+def run_one(
+    session: Session, user: User, app: Application, job: Job, site: UserSite, page, llm: LLM | None, dry_run: bool
+) -> ApplyOutcome:
+    s = get_settings()
+    vault = vault_view_for(user, app)
+    runner = FormRunner(session, vault, answers=AnswerSource(session, llm, user, job), llm=llm, user=user)
+    shot = s.screenshots_dir / str(user.id) / f"{app.id}-{utcnow().strftime('%Y%m%d%H%M%S')}.png"
+    submit = (
+        not dry_run
+        and site.auto_submit
+        and app.status == AppStatus.approved
+        or (not dry_run and site.auto_submit and app.status == AppStatus.queued)
+    )
+    try:
+        result: FillResult = runner.run(
+            page, url=job.apply_url, ats_hint=job.ats_type, submit=submit, screenshot_path=shot
+        )
+    except Exception as exc:  # browser errors: timeouts, navigation failures
+        return record_outcome(session, user, app, job, None, error=f"{type(exc).__name__}: {exc}")
+    return record_outcome(session, user, app, job, result)
 
 
 def apply_user(
@@ -194,4 +223,4 @@ def apply_all(
     return results
 
 
-__all__ = ["apply_all", "apply_user", "run_one", "pick_applications", "Path"]
+__all__ = ["apply_all", "apply_user", "run_one", "record_outcome", "pick_applications", "ASSISTED_SITES", "Path"]

@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Data Engineer | Globex | LinkedIn</title>
+<style>
+  body { font-family: sans-serif; margin: 0; padding: 24px; }
+  .hidden { display: none; }
+  .jobs-easy-apply-modal { position: fixed; top: 40px; left: 20%; width: 60%; background: #fff; border: 1px solid #999; padding: 16px; }
+  .artdeco-inline-feedback--error { color: #b00; }
+  .jobs-document-upload-redesign-card__container { border: 1px solid #0a66c2; padding: 8px; margin-top: 8px; }
+  fieldset { border: 0; padding: 0; margin: 12px 0; }
+  label { display: block; margin-top: 8px; }
+  footer { margin-top: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <h1 class="job-title">Senior Python Developer</h1>
+  <div class="company">Acme · Bengaluru, Karnataka, India</div>
+  <div class="jobs-apply-button--top-card">
+    <button class="jobs-apply-button artdeco-button" aria-label="Easy Apply to Senior Python Developer at Acme" id="ember-easy-apply">Easy Apply</button>
+  </div>
+  <div class="description">We are looking for a backend engineer with Python, FastAPI and Postgres.</div>
+</main>
+
+<div class="jobs-easy-apply-modal hidden" data-test-modal id="modal" role="dialog">
+  <button aria-label="Dismiss" class="artdeco-modal__dismiss" id="dismiss">X</button>
+  <h2>Apply to Acme</h2>
+  <progress value="25" max="100" id="progress"></progress>
+
+  <form id="easy-apply-form" onsubmit="return false;">
+    <!-- step 1: contact info -->
+    <section class="step" data-step="1">
+      <h3>Contact info</h3>
+      <label for="first-name">First name</label>
+      <input id="first-name" name="first-name" type="text" required>
+      <label for="last-name">Last name</label>
+      <input id="last-name" name="last-name" type="text" required>
+      <label for="email-select">Email address</label>
+      <select id="email-select" name="email" required>
+        <option value="">Select an option</option>
+        <option value="demo.applies@example.com" selected>demo.applies@example.com</option>
+        <option value="other@example.com">other@example.com</option>
+      </select>
+      <label for="country-select">Phone country code</label>
+      <select id="country-select" name="phoneCountry" required>
+        <option value="">Select an option</option>
+        <option value="us">United States (+1)</option>
+        <option value="in" selected>India (+91)</option>
+        <option value="gb">United Kingdom (+44)</option>
+      </select>
+      <label for="phone">Mobile phone number</label>
+      <input id="phone" name="phone" type="tel" required>
+    </section>
+
+    <!-- step 2: additional questions -->
+    <section class="step hidden" data-step="2">
+      <h3>Additional Questions</h3>
+      <fieldset>
+        <legend>Will you now or in the future require visa sponsorship?</legend>
+        <label><input type="radio" name="sponsorship" value="yes" required> Yes</label>
+        <label><input type="radio" name="sponsorship" value="no"> No</label>
+      </fieldset>
+      <fieldset>
+        <legend>Are you willing to relocate to Bengaluru?</legend>
+        <label><input type="radio" name="relocate" value="yes" required> Yes</label>
+        <label><input type="radio" name="relocate" value="no"> No</label>
+      </fieldset>
+      <label for="years-python">How many years of work experience do you have with Python?</label>
+      <input id="years-python" name="years-python" type="text" inputmode="numeric" required>
+      <label for="years-fastapi">How many years of experience do you have with FastAPI?</label>
+      <input id="years-fastapi" name="years-fastapi" type="text" inputmode="numeric" required>
+      <label for="notice">Notice period</label>
+      <select id="notice" name="notice" required>
+        <option value="">Select an option</option>
+        <option value="immediate">Immediate</option>
+        <option value="15">15 days</option>
+        <option value="30">30 days</option>
+        <option value="60">60 days</option>
+      </select>
+      <label for="ctc">What is your expected CTC (in LPA)?</label>
+      <input id="ctc" name="ctc" type="text" required>
+    </section>
+
+    <!-- step 3: resume -->
+    <section class="step hidden" data-step="3">
+      <h3>Resume</h3>
+      <p>Be sure to include an updated resume</p>
+      <label for="resume-upload">Upload resume</label>
+      <input id="resume-upload" name="resume" type="file" accept=".pdf,.doc,.docx" required>
+      <div class="jobs-document-upload-redesign-card__container hidden" id="resume-card">
+        <span id="resume-card-name"></span>
+      </div>
+    </section>
+
+    <!-- step 4: review -->
+    <section class="step hidden" data-step="4">
+      <h3>Review your application</h3>
+      <p>Contact: <span id="review-contact"></span></p>
+      <label><input type="checkbox" id="follow-company-checkbox" name="follow-company" checked> Follow Acme to stay up to date with their page.</label>
+    </section>
+
+    <div class="artdeco-inline-feedback--error hidden" id="error" role="alert"></div>
+
+    <footer>
+      <button type="button" aria-label="Continue to next step" data-easy-apply-next-button id="next">Next</button>
+      <button type="button" aria-label="Review your application" class="hidden" id="review">Review</button>
+      <button type="button" aria-label="Submit application" class="hidden" id="submit">Submit application</button>
+    </footer>
+  </form>
+</div>
+
+<div id="discard-dialog" class="hidden" role="alertdialog">
+  <p>Discard application?</p>
+  <button data-control-name="discard_application_confirm_btn" id="discard">Discard</button>
+  <button data-control-name="discard_application_cancel_btn" id="keep">Go back</button>
+</div>
+
+<div id="sent" class="hidden">
+  <p>Your application was sent to Acme!</p>
+  <button aria-label="Dismiss" id="sent-dismiss">Done</button>
+</div>
+
+<!-- state visible to the test -->
+<div id="state" data-step="0" data-submitted="0" data-discarded="0" data-dismissed="0"></div>
+
+<script>
+(function () {
+  var step = 0;
+  var state = document.getElementById('state');
+  var modal = document.getElementById('modal');
+  var error = document.getElementById('error');
+  var steps = Array.prototype.slice.call(document.querySelectorAll('.step'));
+  var next = document.getElementById('next');
+  var review = document.getElementById('review');
+  var submit = document.getElementById('submit');
+
+  function show(n) {
+    step = n;
+    state.setAttribute('data-step', String(n));
+    steps.forEach(function (s) { s.classList.toggle('hidden', Number(s.getAttribute('data-step')) !== n); });
+    document.getElementById('progress').value = n * 25;
+    next.classList.toggle('hidden', n >= 3);
+    review.classList.toggle('hidden', n !== 3);
+    submit.classList.toggle('hidden', n !== 4);
+    error.classList.add('hidden');
+    error.textContent = '';
+    if (n === 4) {
+      document.getElementById('review-contact').textContent =
+        document.getElementById('first-name').value + ' ' + document.getElementById('last-name').value;
+    }
+  }
+
+  function validate() {
+    var section = steps[step - 1];
+    var controls = section.querySelectorAll('input, select');
+    var groups = {};
+    for (var i = 0; i < controls.length; i++) {
+      var el = controls[i];
+      if (el.type === 'radio') {
+        groups[el.name] = groups[el.name] || el.checked;
+        continue;
+      }
+      if (el.type === 'file') {
+        if (el.required && el.files.length === 0) return 'Please upload a resume';
+        continue;
+      }
+      if (el.required && !el.value) return 'Please enter a valid answer: ' + el.name;
+    }
+    var names = Object.keys(groups);
+    for (var j = 0; j < names.length; j++) if (!groups[names[j]]) return 'Please make a selection: ' + names[j];
+    return '';
+  }
+
+  function advance() {
+    var problem = (step === 1) ? 'Please enter a valid phone number' : validate();
+    if (problem) {
+      error.textContent = problem;
+      error.classList.remove('hidden');
+      return;
+    }
+    show(step + 1);
+  }
+
+  document.getElementById('ember-easy-apply').addEventListener('click', function () {
+    modal.classList.remove('hidden');
+    show(1);
+  });
+  next.addEventListener('click', advance);
+  review.addEventListener('click', advance);
+  submit.addEventListener('click', function () {
+    if (validate()) { advance(); return; }
+    modal.classList.add('hidden');
+    state.setAttribute('data-submitted', '1');
+    document.getElementById('sent').classList.remove('hidden');
+  });
+  document.getElementById('sent-dismiss').addEventListener('click', function () {
+    document.getElementById('sent').classList.add('hidden');
+  });
+  document.getElementById('resume-upload').addEventListener('change', function (e) {
+    var card = document.getElementById('resume-card');
+    if (e.target.files.length) {
+      card.classList.remove('hidden');
+      document.getElementById('resume-card-name').textContent = e.target.files[0].name;
+    }
+  });
+  document.getElementById('dismiss').addEventListener('click', function () {
+    state.setAttribute('data-dismissed', '1');
+    document.getElementById('discard-dialog').classList.remove('hidden');
+  });
+  document.getElementById('discard').addEventListener('click', function () {
+    document.getElementById('discard-dialog').classList.add('hidden');
+    modal.classList.add('hidden');
+    state.setAttribute('data-discarded', '1');
+    document.getElementById('easy-apply-form').reset();
+  });
+  document.getElementById('keep').addEventListener('click', function () {
+    document.getElementById('discard-dialog').classList.add('hidden');
+  });
+})();
+</script>
+</body>
+</html>

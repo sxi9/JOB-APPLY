@@ -27,7 +27,7 @@ class Notifier(Protocol):
 
 class LogNotifier:
     def send(self, user: User, kind: str, message: str) -> bool:
-        log.info("notify", user=user.username, kind=kind, message=message)
+        log.info("notify", user=user.username, kind=kind, text=message)
         return True
 
 
