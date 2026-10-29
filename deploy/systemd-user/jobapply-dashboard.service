@@ -1,0 +1,14 @@
+[Unit]
+Description=JOB-APPLY dashboard (user service)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/jobapply
+EnvironmentFile=%h/jobapply/.env
+ExecStart=%h/jobapply/.venv/bin/jobapply serve
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

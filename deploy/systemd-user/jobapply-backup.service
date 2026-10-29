@@ -1,0 +1,9 @@
+[Unit]
+Description=JOB-APPLY backup (user service)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/jobapply
+EnvironmentFile=%h/jobapply/.env
+Environment=APP_DIR=%h/jobapply
+ExecStart=%h/jobapply/deploy/backup.sh

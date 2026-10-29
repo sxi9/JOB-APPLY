@@ -1,0 +1,14 @@
+[Unit]
+Description=JOB-APPLY collectors (scheduler, collector group; user service)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/jobapply
+EnvironmentFile=%h/jobapply/.env
+ExecStart=%h/jobapply/.venv/bin/jobapply schedule -g collector
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
