@@ -13,7 +13,6 @@ from jobapply.forms.runner import AnswerSource, FillResult, FormRunner, vault_vi
 from jobapply.models import AnswerBank, Application, AppStatus, FormProfile, Job, UserSite
 from jobapply.pipeline import apply as apply_mod
 from jobapply.seed import DEMO_PROFILE
-from jobapply.users import create_user
 
 FIXTURES = Path(__file__).parent / "fixtures" / "forms"
 PROFILES = Path(__file__).parent.parent / "config" / "form_profiles"
@@ -24,43 +23,6 @@ URLS = {
     "workable": "https://apply.workable.com/j/81B46579FE/apply",
     "smartrecruiters": "https://jobs.smartrecruiters.com/oneclick-ui/company/Experian/publication/7126627d",
 }
-
-
-@pytest.fixture(scope="module")
-def browser():
-    from playwright.sync_api import sync_playwright
-
-    with sync_playwright() as pw:
-        # The sandbox ships a Chromium build that differs from the one this Playwright wants.
-        exe = get_settings().chromium_executable
-        b = pw.chromium.launch(executable_path=exe) if exe else pw.chromium.launch()
-        yield b
-        b.close()
-
-
-@pytest.fixture
-def page(browser):
-    ctx = browser.new_context()
-    p = ctx.new_page()
-    yield p
-    ctx.close()
-
-
-@pytest.fixture
-def demo(session, tmp_path, monkeypatch):
-    monkeypatch.setenv("JOBAPPLY_DATA_DIR", str(tmp_path / "data"))
-    get_settings.cache_clear()
-    user = create_user(session, "demo", "demo1234", profile=DEMO_PROFILE, preferences={"daily_cap": 20})
-    session.commit()
-    yield user
-    get_settings.cache_clear()
-
-
-@pytest.fixture
-def resume(tmp_path):
-    p = tmp_path / "resume.pdf"
-    p.write_bytes(b"%PDF-1.4\n%fake\n")
-    return p
 
 
 def vault(resume):

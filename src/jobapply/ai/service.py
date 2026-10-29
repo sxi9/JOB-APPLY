@@ -295,6 +295,9 @@ def prepare_application(session: Session, llm: LLM | None, user: User, app: Appl
             except LLMError as exc:
                 log.warning("resume tailoring via LLM failed, using master", user=user.username, job=job.id,
                             error=str(exc))
+            except Exception as exc:  # noqa: BLE001 - a bad variant must never stop the application queueing
+                log.warning("resume tailoring errored, using master", user=user.username, job=job.id,
+                            error=f"{type(exc).__name__}: {exc}")
         if resume is None:
             try:
                 resume = master_resume_pdf(user)

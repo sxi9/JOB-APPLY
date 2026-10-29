@@ -31,12 +31,45 @@ EXTRACT_JS = r"""
     const lg = fs.querySelector('legend, .application-label, .field-label, label:not(:has(input))');
     return lg ? lg.innerText : '';
   };
-  let i = 0;
-  for (const el of document.querySelectorAll('input, select, textarea')) {
-    if (el.type === 'hidden' || el.type === 'submit' || el.type === 'button' || el.type === 'image') continue;
-    const r = el.getBoundingClientRect();
-    const style = window.getComputedStyle(el);
-    const hidden = style.display === 'none' || style.visibility === 'hidden' || (r.width === 0 && r.height === 0 && el.type !== 'file');
+  // Custom dropdowns (React-Select, Ashby, Workday) are a text input with role=combobox / aria-autocomplete
+  // whose options only exist in the DOM while the menu is open. They have no <label for> as often as not,
+  // so the label is resolved from aria-labelledby / aria-describedby or the nearest visible label text.
+  const isCombobox = (el) => el.tagName === 'INPUT' && (el.type === 'text' || el.type === '') &&
+    (el.getAttribute('role') === 'combobox' || /^(list|both)$/.test(el.getAttribute('aria-autocomplete') || ''));
+  const idsText = (attr) => (attr || '').split(/\s+/).filter(Boolean)
+    .map(id => { const n = document.getElementById(id); return n && !/placeholder|error/.test(id) ? (n.innerText || '').trim() : ''; })
+    .filter(Boolean).join(' ');
+  const nearestLabel = (el) => {
+    let n = el;
+    for (let d = 0; d < 6 && n && n !== document.body; d++, n = n.parentElement) {
+      const lg = n.querySelector('label, legend, .application-label, .field-label, [class*="label"]');
+      if (lg && lg !== el && lg.innerText && lg.innerText.trim()) return lg.innerText;
+    }
+    return '';
+  };
+  // Inputs that share a small container with a combobox: React-Select's required-validation twin, or an ATS
+  // "question_<n>" text input mirrored by a visible combobox. Returns the one other text input, or null.
+  const twinOf = (el) => {
+    let n = el.parentElement;
+    for (let d = 0; d < 6 && n && n.tagName !== 'FORM' && n !== document.body; d++, n = n.parentElement) {
+      const inputs = Array.from(n.querySelectorAll('input')).filter(x => !['hidden', 'submit', 'button', 'image', 'file', 'checkbox', 'radio'].includes(x.type));
+      if (inputs.length < 2) continue;
+      if (inputs.length === 2) return inputs.find(x => x !== el) || null;
+      return null;
+    }
+    return null;
+  };
+  const inputs = Array.from(document.querySelectorAll('input, select, textarea'))
+    .filter(el => !(el.type === 'hidden' || el.type === 'submit' || el.type === 'button' || el.type === 'image'));
+  const twins = new Map();  // non-combobox input -> its combobox
+  for (const el of inputs) {
+    if (!isCombobox(el)) continue;
+    const t = twinOf(el);
+    if (t && !isCombobox(t)) twins.set(t, el);
+  }
+  // Stable selectors first, so a twin can name its combobox whichever of the two comes first in the DOM.
+  const bySelector = new Map();
+  inputs.forEach((el, i) => {
     let selector = '';
     if (el.id && !/^\d|[:.]/.test(el.id)) selector = `#${esc(el.id)}`;
     else if (el.name) selector = `${el.tagName.toLowerCase()}[name="${el.name.replace(/"/g, '\\"')}"]`;
@@ -45,15 +78,47 @@ EXTRACT_JS = r"""
       selector = `[data-jobapply-idx="${i}"]`;
     }
     seen.add(selector);
+    bySelector.set(el, selector);
+  });
+  let i = 0;
+  for (const el of inputs) {
+    const r = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    let hidden = style.display === 'none' || style.visibility === 'hidden' || (r.width === 0 && r.height === 0 && el.type !== 'file');
+    const selector = bySelector.get(el);
     let options = [];
     if (el.tagName === 'SELECT') options = Array.from(el.options).map(o => o.text.trim()).filter(Boolean).slice(0, 80);
-    const type = el.tagName === 'SELECT' ? 'select' : (el.tagName === 'TEXTAREA' ? 'textarea' : (el.type || 'text'));
+    const combo = isCombobox(el);
+    const type = el.tagName === 'SELECT' ? 'select' : (el.tagName === 'TEXTAREA' ? 'textarea' : (combo ? 'combobox' : (el.type || 'text')));
+    let label = (labelFor(el) || '').trim();
+    let required = !!(el.required || el.getAttribute('aria-required') === 'true' || /required|✱|\*/.test((el.labels && el.labels[0]) ? el.labels[0].innerText : ''));
+    const role = el.getAttribute('role') || '';
+    const ariaAutocomplete = el.getAttribute('aria-autocomplete') || '';
+    const expanded = el.getAttribute('aria-expanded') || '';
+    const controls = el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '';
+    let twin = '';
+    if (combo) {
+      if (!label) label = idsText(el.getAttribute('aria-labelledby')) || idsText(el.getAttribute('aria-describedby'));
+      const t = twinOf(el);
+      if (t && !isCombobox(t)) {
+        if (!label) label = (labelFor(t) || '').trim();
+        required = required || !!(t.required || t.getAttribute('aria-required') === 'true');
+      }
+      if (!label) label = (nearestLabel(el) || '').trim();
+    } else if (twins.has(el)) {
+      // The twin is never filled directly: the combobox is the control the user sees.
+      const c = twins.get(el);
+      twin = bySelector.get(c) || '';
+      if (!label) label = (labelFor(c) || idsText(c.getAttribute('aria-labelledby')) || nearestLabel(c) || '').trim();
+      hidden = true;
+    }
     out.push({ idx: i, selector, tag: el.tagName.toLowerCase(), type, name: el.name || '', id: el.id || '',
-      label: (labelFor(el) || '').trim().replace(/\s+/g, ' ').slice(0, 200),
+      label: label.replace(/\s+/g, ' ').slice(0, 200),
       group: (type === 'radio' || type === 'checkbox') ? (groupLabel(el) || '').trim().replace(/\s+/g, ' ').slice(0, 200) : '',
-      required: !!(el.required || el.getAttribute('aria-required') === 'true' || /required|✱|\*/.test((el.labels && el.labels[0]) ? el.labels[0].innerText : '')),
+      required,
       value: el.type === 'checkbox' || el.type === 'radio' ? (el.value || '') : '',
-      options, hidden, autocomplete: el.autocomplete || '' });
+      options, hidden, autocomplete: el.autocomplete || '',
+      role, aria_autocomplete: ariaAutocomplete, expanded, controls, twin });
     i += 1;
   }
   return out;
@@ -85,6 +150,14 @@ class FormField:
     options: list[str] = field(default_factory=list)
     hidden: bool = False
     autocomplete: str = ""
+    # ARIA of custom dropdowns: role=combobox, aria-autocomplete list/both, aria-expanded, aria-controls/owns.
+    role: str = ""
+    aria_autocomplete: str = ""
+    expanded: str = ""
+    controls: str = ""
+    # Set on the input that mirrors a combobox (React-Select's required twin, a hidden question_<n> input):
+    # the combobox's selector. Such a field is reported hidden and never filled on its own.
+    twin: str = ""
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> FormField:
@@ -102,6 +175,10 @@ class FormField:
     @property
     def is_choice(self) -> bool:
         return self.type in ("radio", "checkbox")
+
+    @property
+    def is_combobox(self) -> bool:
+        return self.type == "combobox"
 
     def brief(self) -> str:
         """One line for the AI mapper prompt."""

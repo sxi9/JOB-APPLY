@@ -1,7 +1,7 @@
 # Greenhouse hosted boards (job-boards.greenhouse.io, boards.greenhouse.io). Selectors recorded from a live
 # form on 2026-10-28. Custom questions carry generated ids (question_<n>) and are mapped by label.
 ats: greenhouse
-detect: "(job-boards|boards)(\\.eu)?\\.greenhouse\\.io/[^/]+/jobs/\\d+"
+detect: "(job-boards|boards)(\\.eu)?\\.greenhouse\\.io/([^/]+/jobs/\\d+|embed/job_app)"
 steps:
   - click: "button:has-text('Accept all'), button:has-text('Accept All Cookies')"
     optional: true

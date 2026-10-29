@@ -29,6 +29,19 @@ On an unknown form the AI reads the accessibility tree once, maps each field to 
 
 Custom questions repeat across companies ("Why do you want to work here", "Years of experience with Python", "Willing to relocate"). Each unique question is stored by normalized hash. First time the AI drafts an answer from the user's vault and the user can edit it. After that the same question is answered instantly from the user's bank. The dashboard lists unanswered questions so they can be filled in bulk.
 
+## Custom dropdowns and autocompletes
+
+Greenhouse job boards, Ashby and Workday render "Select..." questions as a text input with `role="combobox"`
+(React-Select) instead of a `<select>`. The extractor classifies these as type `combobox`, resolves their label
+from `aria-labelledby` or the nearest label, and pairs each with its twin (React-Select's hidden required input,
+or an ATS `question_<n>` text box mirrored by an unlabelled combobox); the twin is marked hidden so it is never
+filled twice or reported as unfilled. Filling one opens it empty first (a fixed list shows its options, an
+autocomplete shows nothing), types the value, and picks the option that matches exact > starts-with > fuzzy
+(rapidfuzz, 80), verifying the control shows the chosen text. A value no fixed option matches goes back to the
+answer source together with the options read from the dropdown (so yes/no questions are answered by the
+heuristics, the answer bank or the LLM); an autocomplete (city, school lookups) takes the suggestion matching
+the value's first token, else the first suggestion, which is flagged for review.
+
 ## Verification
 
 - Dry-run mode fills the form, screenshots it, does not submit. Reviewed on the Queue page.

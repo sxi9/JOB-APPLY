@@ -201,11 +201,82 @@ def _pick_option(options: list[str], answer: str) -> str | None:
         for opt in options:
             if _as_bool(opt) is as_bool:
                 return opt
+    if len(want) > 2:
+        for opt in options:  # "India" -> "India +91" before "British Indian Ocean Territory +246"
+            if opt.strip().lower().startswith(want):
+                return opt
     for opt in options:
         o = opt.strip().lower()
         if want and (want in o or o in want) and len(want) > 2:
             return opt
     return None
+
+
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+                 "nine": 9, "ten": 10, "twelve": 12, "fifteen": 15}
+
+
+def _years_asked(q: str) -> float | None:
+    """The years a screening question asks for: "five (5) years", "3+ years", "two years"."""
+    m = re.search(r"\((\d+(?:\.\d+)?)\)\s*\+?\s*years?|\b(\d+(?:\.\d+)?)\s*\+?\s*years?", q)
+    if m:
+        return float(m.group(1) or m.group(2))
+    m = re.search(r"\b(" + "|".join(_NUMBER_WORDS) + r")\b\s*(?:\(\d+\))?\s*\+?\s*years?", q)
+    return float(_NUMBER_WORDS[m.group(1)]) if m else None
+
+
+def _as_number(value: str) -> float | None:
+    m = re.search(r"\d+(?:\.\d+)?", value or "")
+    return float(m.group(0)) if m else None
+
+
+def _has_bool_options(options: list[str]) -> bool:
+    return any(_as_bool(o) is not None for o in options)
+
+
+def _country_of(profile: dict[str, Any]) -> str | None:
+    """`country` when the profile has one, else the last comma segment of `location` ("Bengaluru, India")."""
+    if profile.get("country"):
+        return str(profile["country"])
+    location = str(profile.get("location") or "")
+    if "," in location:
+        return location.rsplit(",", 1)[1].strip() or None
+    return None
+
+
+def _school_of(profile: dict[str, Any]) -> str | None:
+    if profile.get("school"):
+        return str(profile["school"])
+    resume = profile.get("resume_json")
+    edu = (resume.get("education") or []) if isinstance(resume, dict) else []
+    for entry in edu:
+        if isinstance(entry, dict) and entry.get("institution"):
+            return str(entry["institution"])
+    return None
+
+
+_DEGREE_LEVELS: list[tuple[str, str]] = [
+    (r"ph\.?\s?d|doctor(ate|al)?\b|d\.?phil", "doctor of philosophy"),
+    (r"\bmba\b|m\.?b\.?a\b", "master of business"),
+    (r"\bm\.?\s?(tech|e|sc|s|a|eng|com|ca)\b|master", "master"),
+    (r"\bb\.?\s?(tech|e|sc|s|a|eng|com|ca)\b|bachelor|\bbtech\b|undergrad", "bachelor"),
+    (r"associate|diploma", "associate"),
+    (r"high school|secondary|12th|hsc", "high school"),
+]
+
+
+def _degree_of(profile: dict[str, Any], options: list[str] | None) -> str | None:
+    """The profile's education as the form wants it: verbatim for a text box, the degree level ("bachelor")
+    when a dropdown of levels has to be matched."""
+    education = str(profile.get("education") or "").strip()
+    if not education:
+        return None
+    if not options:
+        return education
+    for pattern, level in _DEGREE_LEVELS:
+        if re.search(pattern, education.lower()):
+            return level
+    return education
 
 
 def heuristic_answer(question: str, options: list[str] | None, vault: User | dict | None) -> tuple[str | None, int]:
@@ -216,9 +287,11 @@ def heuristic_answer(question: str, options: list[str] | None, vault: User | dic
     confidence = 0
 
     years_q = re.search(r"(how many )?years?\b.*?(experience|exp\b|working)|experience.*?years?", q)
+    skill_years = False
     for skill, years in _skill_names(profile).items():
         if years_q and skill and _term_in(skill, q) and years not in (None, ""):
             answer, confidence = f"{float(years):g}" if isinstance(years, (int, float)) else str(years), 95
+            skill_years = True
             break
     if answer is None:
         # Every pattern is anchored to the thing it answers: a bare "expected", "mobile" or "availability"
@@ -232,6 +305,9 @@ def heuristic_answer(question: str, options: list[str] | None, vault: User | dic
             (r"(expected|desired|target|preferred) (annual |monthly |base )?(ctc|salary|compensation|pay|package)|"
              r"(salary|compensation|ctc|pay) expectation",
              profile.get("expected_ctc"), 85),
+            # Before work authorization: "will you require X to sponsor you for a work permit" asks about
+            # sponsorship, while "right to work without sponsorship" asks about authorization.
+            (r"(require|need|needs|necessary)\b.{0,60}\bsponsor", profile.get("needs_sponsorship"), 90),
             (r"authori[sz]ed|legally (allowed|able|permitted)|right to work|work (permit|authori[sz]ation|eligibility)",
              profile.get("work_authorization"), 85),
             (r"sponsor", profile.get("needs_sponsorship"), 90),
@@ -246,15 +322,37 @@ def heuristic_answer(question: str, options: list[str] | None, vault: User | dic
             (r"e-?mail (address|id)\b|^(your |work |personal |contact )?e-?mail\s*\*?\??$|"
              r"what('s| is) your e-?mail\s*\??$",
              profile.get("email"), 95),
-            (r"current (company|employer|organi[sz]ation)", profile.get("current_company"), 95),
-            (r"current (title|role|designation|position|job title)", profile.get("current_title"), 95),
+            (r"current (or (most recent|previous|last) )?(company|employer|organi[sz]ation)",
+             profile.get("current_company"), 95),
+            (r"current (or (most recent|previous|last) )?(title|role|designation|position|job title)",
+             profile.get("current_title"), 95),
+            (r"country (of residence|where you (currently )?(reside|live))|current country|which country|"
+             r"^country\s*\*?$",
+             _country_of(profile), 80),
             (r"\b(city|current location|your location|where (do you|are you) (live|based))\b|^location\s*\*?$",
              profile.get("location"), 85),
+            (r"^(school|university|college|institution)\b|alma mater|where did you study|name of (your )?"
+             r"(school|university|college)",
+             _school_of(profile), 80),
+            (r"\bdegree\b|highest (level of )?education|level of education|education level",
+             _degree_of(profile, options), 75),
+            # Marketing / messaging opt-ins default to no, like the mapper skips them when optional.
+            (r"opt[- ]?in|receive (sms|whatsapp|text|marketing) (messages|communications|updates|notifications)|"
+             r"marketing (emails|communications)",
+             "No", 60),
         ]
         for pattern, value, conf in rules:
             if value not in (None, "") and re.search(pattern, q):
                 answer, confidence = str(value), conf
                 break
+    if options and years_q and answer is not None and _has_bool_options(options):
+        # "Do you possess five (5) years of experience in X?" with Yes/No options: compare the years we have.
+        need = _years_asked(q)
+        have = _as_number(answer)
+        if need is not None and have is not None:
+            answer = "Yes" if have >= need else "No"
+            # A skill's own years are a fair basis; the total years are a guess that a human should check.
+            confidence = 70 if skill_years else 45
     authorization_q = re.search(r"authori[sz]|legally|eligib|right to work", q) is not None
     if answer is None and re.search(r"\b(are you|do you|have you|can you|will you|would you)\b", q) and options:
         # Yes/no questions the profile does not cover: the work-authorization family defaults to

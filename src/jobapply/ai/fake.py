@@ -95,9 +95,10 @@ class FakeLLM(LLM):
             for e in master.get("education", [])
         ]
         basics = master.get("basics", {})
-        summary = basics.get("summary") or ctx.get("profile", {}).get("summary", "")
+        summary = basics.get("summary") or ctx.get("profile", {}).get("summary") or ""
+        label = job.get("title") or basics.get("label") or "Application"
         return ResumeVariant(
-            label=job.get("title", basics.get("label", "")), summary=summary, skills=skills, work=work, education=edu
+            label=label, summary=summary, skills=skills, work=work, education=edu
         )
 
     def _answer(self, ctx: dict) -> AnswerResult:
@@ -162,7 +163,7 @@ class FakeLLM(LLM):
                     break
             else:
                 q = (f.get("group") or f.get("label") or "").strip()
-                if q and ftype in ("text", "textarea", "select", "radio", "checkbox", "number"):
+                if q and ftype in ("text", "textarea", "select", "combobox", "radio", "checkbox", "number"):
                     out.append(FieldMapping(idx=f["idx"], key=f"answers.{q[:80]}", confidence=70))
                 else:
                     out.append(FieldMapping(idx=f["idx"], key="skip", confidence=50))

@@ -1,0 +1,159 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Custom dropdown fixture</title>
+<style>
+  .field { margin: 12px 0; }
+  .select-shell { position: relative; width: 320px; }
+  .select__control { border: 1px solid #999; padding: 4px; display: flex; }
+  .select__value-container { position: relative; flex: 1; display: grid; }
+  .select__placeholder, .select__single-value { grid-area: 1 / 1; color: #666; }
+  .select__single-value { color: #000; }
+  .select__input-container { grid-area: 1 / 1; }
+  .select__input { border: 0; outline: 0; background: transparent; width: 100%; }
+  .select__menu { position: absolute; left: 0; right: 0; background: #fff; border: 1px solid #999; z-index: 2; }
+  .select__option { padding: 4px; cursor: pointer; }
+  .select__option--is-focused { background: #def; }
+  .select__menu-notice { padding: 4px; color: #888; }
+  .requiredInput { opacity: 0; position: absolute; width: 100%; height: 20px; left: 0; bottom: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<form id="app" onsubmit="event.preventDefault(); document.getElementById('thanks').style.display='block'">
+  <div class="field"><label for="first_name">First name *</label><input id="first_name" name="first_name" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <div class="field"><label for="country">Country of residence *</label>
+    <select id="country" name="country" required><option value="">Select</option><option>Germany</option><option>India</option></select></div>
+
+  <!-- React-Select style: the labelled input IS the combobox; a required twin sits beside it for validation -->
+  <div class="field"><label id="q1-label" for="q1">Will you require visa sponsorship? *</label>
+    <div class="select-shell" data-name="q1" data-options="Yes|No"></div></div>
+  <div class="field"><label id="q2-label" for="q2">Have you worked here before? *</label>
+    <div class="select-shell" data-name="q2" data-options="Yes|No"></div></div>
+  <div class="field"><label id="q3-label" for="q3">Highest degree *</label>
+    <div class="select-shell" data-name="q3" data-options="Associate's Degree|Bachelor's Degree|Master's Degree"></div></div>
+
+  <!-- Places style autocomplete: nothing until two characters are typed, then remote-looking suggestions -->
+  <div class="field"><label id="city-label" for="city">Location (City) *</label>
+    <div class="select-shell" data-name="city" data-remote="Bengaluru, Karnataka, India|Bengaluru Rural, Karnataka, India|Berlin, Germany|Mysore, Karnataka, India|Boston, MA, USA"></div></div>
+
+  <!-- Older ATS layout: a labelled hidden text input question_<n> mirrored by an unlabelled visible combobox -->
+  <div class="field"><label for="question_4">Did a current employee refer you? *</label>
+    <div class="select-shell" data-name="question_4" data-options="Yes|No" data-legacy="1"></div></div>
+
+  <button type="submit">Submit application</button>
+</form>
+<div id="thanks" style="display:none">Thank you for applying</div>
+
+<script>
+(function () {
+  function build(shell) {
+    var name = shell.dataset.name;
+    var fixed = shell.dataset.options ? shell.dataset.options.split('|') : null;
+    var remote = shell.dataset.remote ? shell.dataset.remote.split('|') : null;
+    var legacy = shell.dataset.legacy === '1';
+    var state = { value: null, open: false, focused: 0, options: [] };
+
+    shell.innerHTML =
+      '<div class="select__control"><div class="select__value-container">' +
+      '<div class="select__placeholder">Select...</div><div class="select__single-value" style="display:none"></div>' +
+      '<div class="select__input-container"><input class="select__input" type="text" autocomplete="off" role="combobox" ' +
+      'aria-autocomplete="list" aria-expanded="false" aria-haspopup="true"></div></div></div>';
+    var input = shell.querySelector('input');
+    var single = shell.querySelector('.select__single-value');
+    var placeholder = shell.querySelector('.select__placeholder');
+    if (legacy) {
+      // The labelled input is a hidden text box the ATS validates; the visible combobox has no id or label.
+      var mirror = document.createElement('input');
+      mirror.type = 'text'; mirror.id = name; mirror.name = name; mirror.required = true; mirror.tabIndex = -1;
+      mirror.setAttribute('aria-hidden', 'true'); mirror.className = 'requiredInput';
+      shell.appendChild(mirror);
+    } else {
+      input.id = name;
+      input.setAttribute('aria-labelledby', name + '-label');
+      var hidden = document.createElement('input');
+      hidden.type = 'hidden'; hidden.name = name; shell.appendChild(hidden);
+      var twin = document.createElement('input');
+      twin.required = true; twin.tabIndex = -1; twin.setAttribute('aria-hidden', 'true'); twin.className = 'requiredInput';
+      shell.appendChild(twin);
+    }
+    var sink = shell.querySelector('input[type=hidden], input.requiredInput#' + CSS.escape(name)) || shell.querySelector('input[type=hidden]');
+
+    function menu() { return shell.querySelector('.select__menu'); }
+    function close() {
+      var m = menu(); if (m) m.remove();
+      state.open = false; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-controls');
+    }
+    function render(options) {
+      state.options = options; state.focused = 0;
+      var m = menu();
+      if (!m) { m = document.createElement('div'); m.className = 'select__menu'; shell.appendChild(m); }
+      var list = '<div class="select__menu-list" role="listbox" id="react-select-' + name + '-listbox">';
+      if (!options.length) list += '<div class="select__menu-notice">No options</div>';
+      options.forEach(function (o, i) {
+        list += '<div class="select__option' + (i === 0 ? ' select__option--is-focused' : '') + '" role="option" ' +
+          'id="react-select-' + name + '-option-' + i + '" aria-selected="false" tabindex="-1">' + o + '</div>';
+      });
+      m.innerHTML = list + '</div>';
+      m.querySelectorAll('[role=option]').forEach(function (el, i) {
+        el.addEventListener('mousedown', function (ev) { ev.preventDefault(); select(options[i]); });
+        el.addEventListener('click', function (ev) { ev.preventDefault(); select(options[i]); });
+      });
+      state.open = true; input.setAttribute('aria-expanded', 'true');
+      input.setAttribute('aria-controls', 'react-select-' + name + '-listbox');
+    }
+    function refresh() {
+      var q = input.value.trim().toLowerCase();
+      if (fixed) {
+        render(fixed.filter(function (o) { return o.toLowerCase().indexOf(q) !== -1; }));
+      } else if (q.length < 2) {
+        render([]);
+      } else {
+        // "remote" lookup: substring or same first three letters, answered a little later
+        setTimeout(function () {
+          if (input.value.trim().toLowerCase() !== q) return;
+          render(remote.filter(function (o) {
+            var lo = o.toLowerCase();
+            return lo.indexOf(q) !== -1 || lo.slice(0, 3) === q.slice(0, 3);
+          }));
+        }, 200);
+      }
+    }
+    function select(text) {
+      state.value = text;
+      single.textContent = text; single.style.display = '';
+      placeholder.style.display = 'none';
+      input.value = '';
+      sink.value = text;
+      close();
+    }
+    function clearValue() {
+      state.value = null; single.textContent = ''; single.style.display = 'none'; placeholder.style.display = '';
+      sink.value = '';
+    }
+    input.addEventListener('focus', refresh);
+    input.addEventListener('mousedown', function () { if (!state.open) refresh(); });
+    input.addEventListener('input', refresh);
+    input.addEventListener('blur', function () { setTimeout(close, 100); });
+    input.addEventListener('keydown', function (ev) {
+      if (ev.key === 'ArrowDown') {
+        ev.preventDefault();
+        if (!state.open) { refresh(); return; }
+        state.focused = Math.min(state.focused + 1, state.options.length - 1);
+        shell.querySelectorAll('[role=option]').forEach(function (el, i) { el.classList.toggle('select__option--is-focused', i === state.focused); });
+      } else if (ev.key === 'Enter') {
+        ev.preventDefault();
+        if (state.open && state.options.length) select(state.options[state.focused]);
+      } else if (ev.key === 'Escape') {
+        input.value = ''; close();
+      } else if (ev.key === 'Backspace' && !input.value && state.value !== null) {
+        clearValue();
+      }
+    });
+  }
+  document.querySelectorAll('.select-shell').forEach(build);
+})();
+</script>
+</body>
+</html>
