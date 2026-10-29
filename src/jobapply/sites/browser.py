@@ -225,8 +225,9 @@ def launch_persistent(pw: Any, user_id: int, site: str, headless: bool | None = 
         kwargs["channel"] = "chrome"
     elif settings.chromium_executable:
         kwargs["executable_path"] = settings.chromium_executable
-    elif headless:
-        kwargs["channel"] = "chromium"
+    # Otherwise use Playwright's bundled full Chromium (the default for launch_persistent_context). The
+    # separate "chromium" channel is not always present and spawns unreliably on Windows, so we never
+    # force it; the bundled build drives persistent profiles headless and headed alike.
     try:
         context = pw.chromium.launch_persistent_context(**kwargs)
     except Exception as exc:  # noqa: BLE001 - Playwright raises its own Error subclasses

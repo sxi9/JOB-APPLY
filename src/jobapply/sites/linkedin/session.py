@@ -94,6 +94,13 @@ def _path_of(url: str) -> str:
     return url.split("linkedin.com", 1)[1] if "linkedin.com" in url else url
 
 
+def _title_of(page: Any) -> str:
+    try:
+        return str(page.title() or "")
+    except Exception:  # noqa: BLE001 - page may be mid-navigation
+        return ""
+
+
 def classify_page(page: Any) -> str:
     """ok | expired | challenge | unknown from the current URL and DOM, without navigating.
 
@@ -112,6 +119,10 @@ def classify_page(page: Any) -> str:
         return "ok"
     if any(_count(page, sel) > 0 for sel in LOGIN_FORM_SELECTORS):
         return "expired"
+    # LinkedIn redirects a logged-out visitor off /feed to the authwall, so landing on /feed with no
+    # login form means logged in even when the nav markup has not rendered yet (common in headless).
+    if path.startswith("/feed") and "feed" in (_title_of(page) or "").lower():
+        return "ok"
     if not content_page:
         text = _page_text(page)
         if any(t in text for t in CHALLENGE_TEXTS):

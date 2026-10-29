@@ -154,8 +154,9 @@ def test_launch_persistent_builds_persistent_context(profiles_dir, monkeypatch):
     assert kw["locale"] == "en-US" and kw["timezone_id"]
     assert "--disable-blink-features=AutomationControlled" in kw["args"]
     assert kw["ignore_default_args"] == ["--enable-automation"]
-    # headless: full Chromium in new headless mode, not the differently fingerprinted headless shell
-    assert "executable_path" not in kw and kw["channel"] == "chromium"
+    # No channel and no executable_path: Playwright's bundled full Chromium drives the persistent profile
+    # (the "chromium" channel is not always installed and spawns unreliably on Windows).
+    assert "executable_path" not in kw and "channel" not in kw
     browser.launch_persistent(PW(), 3, "linkedin", headless=False)
     assert "channel" not in calls[1]
 
