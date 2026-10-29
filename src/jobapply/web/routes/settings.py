@@ -3,7 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from jobapply.ai.providers import CATALOG, parse_order, server_config
+from jobapply.ai.providers import CATALOG, parse_keys, parse_order, server_configs
+from jobapply.ai.service import user_keys
 from jobapply.config import get_settings
 from jobapply.models import Credential, UserSite, utcnow
 from jobapply.pipeline.filters import SENIORITY_ORDER, UserFilters
@@ -21,20 +22,26 @@ CREDENTIAL_KINDS = ["login", "imap", "smtp", "api_key"]
 def settings_page(ctx: Ctx = Depends(get_ctx)):
     creds = ctx.scope.all(Credential, order_by=Credential.site)
     prefs = ctx.view.preferences or {}
-    user_keys = {c.site for c in creds if c.kind == "api_key"}
     order = parse_order(prefs.get("llm_providers")) or parse_order(get_settings().llm_providers)
     providers = []
+    try:
+        vault: Vault | None = Vault()  # once per request, not once per provider
+    except VaultError:
+        vault = None
     for name, spec in CATALOG.items():
-        cfg = server_config(name)
+        servers = server_configs(name)
+        mine = user_keys(ctx.session, ctx.view, name, vault=vault) if vault is not None else []
         providers.append(
             {
                 "spec": spec,
                 "enabled": name in order,
                 "position": order.index(name) + 1 if name in order else 99,
-                "server_key": bool(cfg.api_key),
-                "user_key": name in user_keys,
+                "server_key": bool(servers[0].api_key),
+                "server_keys": len([c for c in servers if c.api_key]),
+                "user_key": bool(mine),
+                "user_keys": len(mine),
                 "model": (prefs.get("llm_models") or {}).get(name, ""),
-                "default_model": cfg.model,
+                "default_model": servers[0].model,
             }
         )
     providers.sort(key=lambda p: (p["position"], p["spec"].name))
@@ -159,10 +166,12 @@ async def save_preferences(request: Request, ctx: Ctx = Depends(get_ctx)):
             n: str(form.get(f"model__{n}") or "").strip() for n in CATALOG if str(form.get(f"model__{n}") or "").strip()
         }
         for name in CATALOG:
-            key = str(form.get(f"key__{name}") or "").strip()
-            if key:
+            # textarea "API keys (one per line)"; the older single `key__` field is still accepted
+            keys = parse_keys(str(form.get(f"keys__{name}") or ""), str(form.get(f"key__{name}") or ""))
+            if keys:
+                secret = {"password": keys[0], "keys": keys}  # `password` keeps older readers working
                 try:
-                    Vault().store(ctx.session, ctx.view.id, name, "api_key", "", {"password": key})
+                    Vault().store(ctx.session, ctx.view.id, name, "api_key", "", secret)
                 except VaultError as exc:
                     flash(request, str(exc), "error")
                     return RedirectResponse("/settings#ai", status_code=303)

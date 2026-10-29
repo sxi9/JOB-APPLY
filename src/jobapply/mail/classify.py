@@ -107,13 +107,52 @@ def rule_category(mail: Mail) -> MailCategory | None:
     return None
 
 
-def classify_mail(session: Session, llm: LLM | None, user: User, mail: Mail) -> MailClassification:
-    rule = rule_category(mail)
-    if rule in (MailCategory.verification, MailCategory.spam) or llm is None:
-        return MailClassification(category=(rule or MailCategory.other).value)
-    prompt = f"From: {mail.sender_name} <{mail.sender}>\nSubject: {mail.subject}\n\n{mail.body[:6000]}" + (
-        f"\n\n(Rule-based hint: {rule.value})" if rule else ""
+_NEEDS_REPLY = {MailCategory.interview, MailCategory.assessment, MailCategory.recruiter_question}
+_REPLY_TEMPLATES = {
+    MailCategory.interview: "The proposed time works for me and I look forward to the conversation. If it "
+    "helps, I can also share a few alternative slots.",
+    MailCategory.assessment: "I will complete the assessment within the given window and let you know as "
+    "soon as it is submitted.",
+    MailCategory.recruiter_question: "My notice period is {notice} and my expected compensation is {expected}. "
+    "Happy to share anything else you need.",
+}
+
+
+def rule_classification(mail: Mail, user: User, rule: MailCategory | None) -> MailClassification:
+    """What the rules alone can say about a mail: the category, whether it wants a reply, and a template
+    reply built from the profile. Works with no LLM at all."""
+    category = rule or MailCategory.other
+    p = user.profile or {}
+    needs_reply = category in _NEEDS_REPLY
+    draft = ""
+    if needs_reply:
+        name = f"{p.get('first_name', '')} {p.get('last_name', '')}".strip() or user.username
+        body = _REPLY_TEMPLATES[category].format(
+            notice=p.get("notice_period") or "available on request",
+            expected=p.get("expected_ctc") or "open to discussion",
+        )
+        draft = f"Hi,\n\nThank you for getting back to me. {body}\n\nBest regards,\n{name}"
+    return MailClassification(
+        category=category.value, needs_reply=needs_reply, draft_reply=draft, summary=mail.subject[:80]
     )
+
+
+def classify_mail(session: Session, llm: LLM | None, user: User, mail: Mail) -> MailClassification:
+    """Rules first and sufficient on their own; the LLM adds what the rules cannot, when one is available.
+
+    - No LLM: the rule category with a template reply.
+    - Rule says rejection / spam / verification / acknowledgement: final, the LLM is never asked.
+    - Rule says interview / assessment (mail that wants a reply): the category is kept, the LLM fills in the
+      company, job title and a reply tailored to the mail (the proposed time, the question asked).
+    - No rule hit: the LLM classifies.
+    An LLM failure falls back to the rules; this function never raises.
+    """
+    rule = rule_category(mail)
+    if llm is None or (rule is not None and rule not in _NEEDS_REPLY):
+        return rule_classification(mail, user, rule)
+    prompt = f"From: {mail.sender_name} <{mail.sender}>\nSubject: {mail.subject}\n\n{mail.body[:6000]}"
+    if rule is not None:
+        prompt = f"The mail is a(n) {rule.value} mail; extract the company, job title and draft the reply.\n\n" + prompt
     try:
         out = structured(
             session,
@@ -129,14 +168,20 @@ def classify_mail(session: Session, llm: LLM | None, user: User, mail: Mail) -> 
                 "body": mail.body,
                 "sender": mail.sender,
                 "profile": user.profile or {},
-                "hint": rule.value if rule else "",
+                "hint": rule.value if rule is not None else "",
             },
         )
     except LLMError as exc:
         log.warning("classify failed, using rules", error=str(exc))
-        return MailClassification(category=(rule or MailCategory.other).value)
-    if out.category not in MailCategory.__members__:
-        out.category = (rule or MailCategory.other).value
+        return rule_classification(mail, user, rule)
+    if rule is not None:
+        # The rule decides the category; the LLM only enriches it.
+        out.category = rule.value
+        out.needs_reply = True
+        if not out.draft_reply.strip():
+            out.draft_reply = rule_classification(mail, user, rule).draft_reply
+    elif out.category not in MailCategory.__members__:
+        out.category = MailCategory.other.value
     return out
 
 

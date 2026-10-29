@@ -52,14 +52,15 @@
 
 <section class="card" style="margin-top:16px">
   <h2>LLM providers <span class="badge">backend: {{ llm_backend }}</span></h2>
-  <p class="muted small">Server failover order from <code>JOBAPPLY_LLM_PROVIDERS</code>. Health is for this process since start.</p>
+  <p class="muted small">Server failover order from <code>JOBAPPLY_LLM_PROVIDERS</code>, one row per server key (keys of one provider rotate round-robin and cool down one at a time). Health is for this process since start; usage is the last 30 days.</p>
   <div class="table-wrap"><table>
-    <thead><tr><th>#</th><th>Provider</th><th>Model</th><th>Server key</th><th>State</th><th>OK / failed</th><th>Last error</th></tr></thead>
+    <thead><tr><th>#</th><th>Provider</th><th>Key</th><th>Model</th><th>Server key</th><th>State</th><th>OK / failed</th><th>30-day usage</th><th>Last error</th></tr></thead>
     {% for p in providers %}
-    <tr><td>{{ loop.index }}</td><td>{{ p.spec.label }}</td><td class="mono">{{ p.model }}</td>
+    <tr><td>{{ loop.index }}</td><td>{{ p.spec.label }}</td><td class="mono small">{{ p.title }}</td><td class="mono">{{ p.model }}</td>
       <td>{% if p.server_key %}<span class="chip chip-green">set</span>{% elif not p.spec.needs_key %}<span class="chip chip-gray">n/a</span>{% else %}<span class="chip chip-amber">missing</span>{% endif %}</td>
-      <td>{% if p.health and p.health.cooling %}<span class="chip chip-red">cooling {{ (p.health.cooldown_left_s // 60) }}m</span>{% elif p.health %}<span class="chip chip-green">ok</span>{% else %}<span class="muted small">unused</span>{% endif %}</td>
+      <td>{% if p.health and p.health.cooling %}<span class="chip chip-red">cooling {{ (p.health.cooldown_left_s // 60) }}m</span>{% elif p.health and (p.health.successes or p.health.failures) %}<span class="chip chip-green">ok</span>{% else %}<span class="muted small">unused</span>{% endif %}</td>
       <td>{{ p.health.successes if p.health else 0 }} / {{ p.health.failures if p.health else 0 }}</td>
+      <td class="small">{{ p.usage.calls }} calls · {{ p.usage.tokens }} tokens</td>
       <td class="small muted">{{ p.health.last_error if p.health else '' }}</td></tr>
     {% endfor %}
   </table></div>

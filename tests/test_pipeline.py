@@ -1,10 +1,10 @@
 from datetime import timedelta
 
-from sqlmodel import select
+from sqlmodel import Session, select
 
 from jobapply.collectors.ats import GreenhouseCollector
 from jobapply.collectors.base import NormalizedJob
-from jobapply.models import Application, CollectorRun, Job, JobSource, User, utcnow
+from jobapply.models import Application, AppStatus, CollectorRun, Job, JobSource, LlmUsage, User, utcnow
 from jobapply.pipeline.collect import run_all
 from jobapply.pipeline.dedupe import dedupe_key, norm_company, norm_title, store_jobs
 from jobapply.pipeline.filters import UserFilters, assign_jobs, detect_seniority, match
@@ -140,3 +140,64 @@ def test_scheduler_registers_tasks(monkeypatch, engine):
     s = build_scheduler(scheduler=BackgroundScheduler())
     assert "collect" in {j.id for j in s.get_jobs()}
     assert build_scheduler(["nope"], scheduler=BackgroundScheduler()).get_jobs() == []
+
+
+# ----------------------------------------------------------------- scoring with no AI at all
+
+
+def _no_ai_env(monkeypatch, tmp_path):
+    """No `.env`, no JOBAPPLY_LLM_BACKEND, no provider keys: what a fresh checkout looks like."""
+    import os
+
+    from jobapply.config import get_settings
+
+    monkeypatch.chdir(tmp_path)  # the repo .env must not leak into the test
+    for name in list(os.environ):
+        if name.startswith("JOBAPPLY_"):
+            monkeypatch.delenv(name)
+    monkeypatch.setenv("JOBAPPLY_DATA_DIR", str(tmp_path / "data"))
+    get_settings.cache_clear()
+
+
+def test_score_all_on_seeded_demo_with_backend_unset(engine, monkeypatch, tmp_path):
+    from jobapply.config import get_settings
+    from jobapply.pipeline.score import score_all
+    from jobapply.seed import seed
+
+    _no_ai_env(monkeypatch, tmp_path)
+    try:
+        assert get_settings().llm_backend == "fake"
+        seed(engine)
+        out = score_all(engine=engine)
+        assert out["demo"]["scored"] >= 1 and out["demo"]["failed"] == 0
+        with Session(engine) as s:
+            assert not s.exec(select(Application).where(Application.status == AppStatus.new)).all()
+            scored = s.exec(select(Application).where(Application.score.isnot(None))).all()
+            assert all(a.score_reason for a in scored)
+    finally:
+        get_settings.cache_clear()
+
+
+def test_score_all_live_backend_without_keys_falls_back_to_heuristics(engine, monkeypatch, tmp_path):
+    from jobapply.config import get_settings
+    from jobapply.pipeline.score import score_all
+    from jobapply.seed import seed
+
+    _no_ai_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("JOBAPPLY_LLM_BACKEND", "live")
+    monkeypatch.setenv("JOBAPPLY_LLM_PROVIDERS", "claude,openai,gemini")  # all keyless: no chain at all
+    get_settings.cache_clear()
+    try:
+        seed(engine)
+        with Session(engine) as s:
+            before = len(s.exec(select(Application).where(Application.status == AppStatus.new)).all())
+        assert before >= 1
+        out = score_all(engine=engine)
+        assert out["demo"]["scored"] == before and out["demo"]["failed"] == 0
+        with Session(engine) as s:
+            rows = s.exec(select(Application).where(Application.score_reason.like("[heuristic]%"))).all()
+            assert len(rows) == before
+            assert all(a.status in (AppStatus.queued, AppStatus.scored) for a in rows)
+            assert not s.exec(select(LlmUsage)).all()
+    finally:
+        get_settings.cache_clear()

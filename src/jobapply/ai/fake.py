@@ -13,49 +13,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from jobapply.ai.base import LLM, AnswerResult, LLMRequest, LLMResult, ResumeVariant, ScoreResult
-
-# Tech words the fake treats as "requirements" when they show up in a posting.
-TECH = {
-    "python",
-    "go",
-    "golang",
-    "java",
-    "kotlin",
-    "rust",
-    "typescript",
-    "javascript",
-    "react",
-    "node",
-    "django",
-    "fastapi",
-    "flask",
-    "spring",
-    "postgres",
-    "postgresql",
-    "mysql",
-    "mongodb",
-    "redis",
-    "kafka",
-    "rabbitmq",
-    "aws",
-    "gcp",
-    "azure",
-    "kubernetes",
-    "docker",
-    "terraform",
-    "airflow",
-    "spark",
-    "sql",
-    "graphql",
-    "grpc",
-    "linux",
-    "ci/cd",
-    "pytorch",
-    "tensorflow",
-    "llm",
-    "ml",
-    "machine learning",
-}
+from jobapply.ai.heuristics import TECH, cover_letter_template, heuristic_answer, score_job_heuristic  # noqa: F401
 
 
 def _words(text: str) -> set[str]:
@@ -97,34 +55,11 @@ class FakeLLM(LLM):
         return {s.lower() for s in (ctx.get("profile", {}).get("skills") or {})}
 
     def _score(self, ctx: dict) -> ScoreResult:
-        job = ctx["job"]
-        text = f"{job.get('title', '')} {job.get('description', '')}".lower()
-        posting_tech = {t for t in TECH if re.search(rf"(?<![\w+]){re.escape(t)}(?![\w+])", text)}
-        skills = self._skills(ctx)
-        matched = sorted(posting_tech & skills)
-        missing = sorted(posting_tech - skills)
-        score = 40 + 12 * len(matched) - 5 * len(missing)
-        title = job.get("title", "").lower()
-        roles = [r.lower() for r in ctx.get("profile", {}).get("target_roles", [])]
-        if any(r in title for r in roles):
-            score += 10
-        score = max(5, min(96, score))
-        reason = (f"Matches {', '.join(matched)}" if matched else "Little overlap with the profile") + (
-            f"; posting also wants {', '.join(missing)}." if missing else "."
-        )
-        return ScoreResult(score=score, reason=reason, matched_skills=matched, missing_skills=missing)
+        profile = ctx.get("profile", {})
+        return score_job_heuristic(profile, {"roles": profile.get("target_roles", [])}, ctx["job"])
 
     def _cover_letter(self, ctx: dict) -> str:
-        job, p = ctx["job"], ctx.get("profile", {})
-        name = f"{p.get('first_name', '')} {p.get('last_name', '')}".strip() or "Candidate"
-        skills = ", ".join(list(p.get("skills") or {})[:3]) or "my experience"
-        return (
-            f"Dear {job.get('company', '')} team,\n\n"
-            f"I am applying for the {job.get('title', '')} role. {p.get('summary', '')}\n\n"
-            f"My work with {skills} maps directly onto what the posting asks for, and I am used to owning "
-            f"services end to end.\n\nI am available with a notice period of {p.get('notice_period', 'one month')} "
-            f"and happy to talk whenever suits you.\n\nBest regards,\n{name}"
-        )
+        return cover_letter_template(ctx.get("profile", {}), ctx["job"], ctx.get("tone", "professional"))
 
     def _resume(self, ctx: dict) -> ResumeVariant:
         master, job = ctx["resume"], ctx["job"]
@@ -166,41 +101,12 @@ class FakeLLM(LLM):
         )
 
     def _answer(self, ctx: dict) -> AnswerResult:
-        result = self._answer_text(ctx)
         options = ctx.get("options") or []
+        answer, confidence = heuristic_answer(ctx["question"], options, ctx.get("profile", {}))
+        if answer is not None:
+            return AnswerResult(answer=answer, confidence=confidence)
         if options:
-            low = result.answer.strip().lower()
-            yes_no = {"yes", "no", "true", "false"}
-            for opt in options:
-                if opt.strip().lower() == low or (
-                    low in yes_no and opt.strip().lower().startswith(low[:1] if low in ("true", "false") else low)
-                ):
-                    return AnswerResult(answer=opt, confidence=result.confidence)
             return AnswerResult(answer=options[0], confidence=25)
-        return result
-
-    def _answer_text(self, ctx: dict) -> AnswerResult:
-        q, p = ctx["question"].lower(), ctx.get("profile", {})
-        skills = {k.lower(): v for k, v in (p.get("skills") or {}).items()}
-        for skill, years in skills.items():
-            if "years" in q and skill in q:
-                return AnswerResult(answer=f"{years:g}", confidence=95)
-        rules = [
-            ("notice", p.get("notice_period")),
-            ("current ctc", p.get("current_ctc")),
-            ("current salary", p.get("current_ctc")),
-            ("expected", p.get("expected_ctc")),
-            ("authori", p.get("work_authorization")),
-            ("relocat", p.get("willing_to_relocate")),
-            ("sponsor", p.get("needs_sponsorship")),
-            ("linkedin", p.get("linkedin")),
-            ("github", p.get("github")),
-            ("years of experience", p.get("years_experience")),
-            ("phone", p.get("phone")),
-        ]
-        for needle, value in rules:
-            if needle in q and value:
-                return AnswerResult(answer=str(value), confidence=90)
         return AnswerResult(answer="I would be glad to discuss this in a conversation.", confidence=30)
 
     def _form_map(self, ctx: dict):

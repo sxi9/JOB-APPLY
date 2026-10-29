@@ -5,6 +5,7 @@ from email.utils import format_datetime
 import pytest
 from sqlmodel import select
 
+from jobapply.ai.base import LLMError
 from jobapply.ai.fake import FakeLLM
 from jobapply.config import get_settings
 from jobapply.mail import inbox as inbox_mod
@@ -429,3 +430,85 @@ def test_smtp_build_attachment(tmp_path):
     sender.send("hr@acme.example", "Application", "Hello", attachments=[f], cc="cc@x.io")
     msg = FakeSmtp.sent[0]
     assert msg["Cc"] == "cc@x.io" and any(p.get_filename() == "resume.pdf" for p in msg.iter_attachments())
+
+
+# ----------------------------------------------------------------- rules only, no LLM
+
+
+def test_rules_alone_classify_and_draft_without_llm(session, demo):
+    m = Mail(
+        uid="1",
+        message_id="x",
+        sender="ada@stripe.com",
+        sender_name="Ada",
+        subject="Interview for Backend Engineer",
+        body="We'd like to schedule a call with you on Thursday.",
+    )
+    out = classify_mail(session, None, demo, m)
+    assert out.category == "interview" and out.needs_reply and "Demo User" in out.draft_reply
+    assert out.summary == m.subject
+    rej = Mail(uid="2", message_id="y", sender="a@b.com", sender_name="", subject="Update",
+               body="Unfortunately we will not be moving forward.")
+    out = classify_mail(session, None, demo, rej)
+    assert out.category == "rejection" and not out.needs_reply and not out.draft_reply
+    # With an LLM, a rule hit that wants a reply keeps the rule's category but the LLM enriches it (company,
+    # title, tailored draft); rejections never reach the LLM.
+    llm = FakeLLM()
+    out = classify_mail(session, llm, demo, m)
+    assert out.category == "interview" and out.needs_reply and "Demo User" in out.draft_reply
+    assert len(llm.calls) == 1 and llm.calls[0].context["hint"] == "interview"
+    assert classify_mail(session, llm, demo, rej).category == "rejection"
+    assert len(llm.calls) == 1
+    # Mail the rules could not place goes to the LLM.
+    q = Mail(uid="3", message_id="z", sender="ada@stripe.com", sender_name="Ada", subject="Quick question",
+             body="Could you share your notice period?")
+    assert classify_mail(session, llm, demo, q).category == "recruiter_question" and len(llm.calls) == 2
+    assert classify_mail(session, None, demo, q).category == "other"
+
+
+def test_interview_mail_with_llm_keeps_rule_category_and_gets_llm_extraction(session, demo):
+    """Regression: a rule hit used to short-circuit before the LLM, so an interview mail from a recruiting
+    agency never got the company extracted and could not be linked to the application."""
+    from jobapply.mail.classify import MailClassification
+
+    m = Mail(uid="1", message_id="x", sender="jo@talent-agency.io", sender_name="Jo", subject="Interview request",
+             body="Stripe would like to interview you for Backend Engineer on Thursday 3pm.")
+    llm = FakeLLM()
+    llm.queue("classify", MailClassification(category="other", company="Stripe", job_title="Backend Engineer",
+                                             needs_reply=False, draft_reply="Thursday 3pm works for me.", summary="s"))
+    out = classify_mail(session, llm, demo, m)
+    assert out.category == "interview" and out.company == "Stripe" and out.job_title == "Backend Engineer"
+    assert out.needs_reply and out.draft_reply == "Thursday 3pm works for me."
+    # An empty LLM draft falls back to the template; an LLM failure falls back to the rules entirely.
+    llm.queue("classify", MailClassification(category="interview", company="Stripe"))
+    out = classify_mail(session, llm, demo, m)
+    assert out.company == "Stripe" and "Demo User" in out.draft_reply
+
+    class Down(FakeLLM):
+        def complete(self, request):
+            raise LLMError("429", retryable=True)
+
+    out = classify_mail(session, Down(), demo, m)
+    assert out.category == "interview" and out.company == "" and "Demo User" in out.draft_reply
+
+
+def test_sync_inbox_without_llm_never_raises(session, demo):
+    app, _ = _applied(session, demo, "Stripe", "Backend Engineer")
+    messages = [
+        raw("Ada <ada@stripe.com>", "Interview for Backend Engineer", "Let's schedule a call on Thursday."),
+        raw("noreply@greenhouse.io", "Verify your email", "Your verification code is 445566"),
+        raw("alerts@jobs.example", "Jobs you may like", "unsubscribe here"),
+        raw("someone@elsewhere.example", "Hello", "Could you tell me more about yourself?"),
+    ]
+    r, _ = reader(messages)
+    sender = SmtpSender(
+        SmtpConfig(host="smtp.example.com", username="demo.applies@example.com", password="pw"), client_factory=FakeSmtp
+    )
+    counts = sync_inbox(session, demo, r, None, sender)
+    assert counts["seen"] == 4 and counts["new"] == 4 and counts["status_changes"] == 1
+    session.refresh(app)
+    assert app.status == AppStatus.interview
+    rows = {m.subject: m for m in session.exec(select(MailMessage).where(MailMessage.user_id == demo.id)).all()}
+    assert rows["Interview for Backend Engineer"].draft_reply and rows["Interview for Backend Engineer"].forwarded
+    assert rows["Hello"].category == MailCategory.other and not rows["Hello"].draft_reply
+    assert len(FakeSmtp.sent) == 1

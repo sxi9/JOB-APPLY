@@ -94,22 +94,52 @@ class FillResult:
 
 
 class AnswerSource:
-    """Answers custom questions: answer bank first, then the LLM. Injected so tests can stub it."""
+    """Answers custom questions: answer bank first, then the profile heuristics, then the LLM when there is
+    one. Injected so tests can stub it. `(None, 0)` means nobody could answer.
+
+    A heuristic answer is stored in the answer bank like an AI draft (`source="heuristic"`, unapproved) so the
+    user can see, approve or correct it on the Answers page instead of it being repeated on every form."""
 
     def __init__(self, session: Session, llm: LLM | None, user, job=None):
         self.session, self.llm, self.user, self.job = session, llm, user, job
 
     def answer(self, question: str, options: list[str] | None = None) -> tuple[str | None, int]:
-        from jobapply.ai.service import answer_question
+        from jobapply.ai.heuristics import heuristic_answer
+        from jobapply.ai.service import answer_question, bank_answer
 
+        if self.user is None:
+            return None, 0
+        banked = bank_answer(self.session, self.user, question)
+        if banked is not None:
+            return banked.answer, banked.confidence
+        answer, conf = heuristic_answer(question, options, self.user)
+        if answer is not None:
+            self._bank_heuristic(question, answer)
+            return answer, conf
         if self.llm is None:
             return None, 0
         try:
-            result = answer_question(self.session, self.llm, self.user, question, self.job, options=options)
+            result = answer_question(self.session, self.llm, self.user, question, self.job, use_bank=False,
+                                     options=options)
         except LLMError as exc:
             log.warning("answer failed", question=question[:80], error=str(exc))
             return None, 0
+        if not result.answer:
+            return None, 0
         return result.answer, result.confidence
+
+    def _bank_heuristic(self, question: str, answer: str) -> None:
+        from jobapply.forms.answers import question_hash
+        from jobapply.models import AnswerBank
+
+        qh = question_hash(question)
+        exists = self.session.exec(
+            select(AnswerBank).where(AnswerBank.user_id == self.user.id, AnswerBank.question_hash == qh)
+        ).first()
+        if exists is None:
+            self.session.add(AnswerBank(user_id=self.user.id, question_hash=qh, question=question, answer=answer,
+                                        source="heuristic", approved=False))
+            self.session.flush()
 
 
 class FormRunner:

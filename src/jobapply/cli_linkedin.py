@@ -55,6 +55,26 @@ def login(user: str = typer.Option(..., "--user", "-u", help="Username"),
     raise typer.Exit(code=0 if ok else 1)
 
 
+@linkedin_app.command("import-chrome")
+def import_chrome(user: str = typer.Option(..., "--user", "-u", help="Username"),
+                  profile: str = typer.Option(..., "--profile", "-p", help="Chrome profile name as shown in Chrome"),
+                  check_after: bool = typer.Option(True, "--check/--no-check",
+                                                   help="Open the feed afterwards and report the status")) -> None:
+    """Copy the signed-in session (cookies and web storage only) of one Chrome profile into this user's
+    LinkedIn profile, so no interactive login is needed. The Chrome profile itself is not modified."""
+    from jobapply.db import session_scope
+    from jobapply.sites.browser import import_chrome_session
+
+    with session_scope() as session:
+        u = _load_user(session, user)
+        dest = import_chrome_session(u.id, "linkedin", profile)
+    typer.echo(f"imported Chrome profile {profile!r} into {dest}")
+    if check_after:
+        status = _with_session(user, None, lambda s, page: s.check(page))
+        typer.echo(f"linkedin session: {status}")
+        raise typer.Exit(code=0 if status == "ok" else 1)
+
+
 @linkedin_app.command()
 def check(user: str = typer.Option(..., "--user", "-u", help="Username"),
           headless: bool = typer.Option(None, "--headless/--headful",

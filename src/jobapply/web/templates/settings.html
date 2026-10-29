@@ -73,20 +73,33 @@
   <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="section" value="ai">
   <h2>AI</h2>
   {% if not live %}<p class="flash flash-ok">The server runs the fake LLM (<code>JOBAPPLY_LLM_BACKEND=fake</code>): no API calls, deterministic scores. Set it to <code>live</code> to use the providers below.</p>{% endif %}
-  <p class="muted small">Providers are tried in this order. When one is rate limited, out of credits or down, the next one takes over automatically. Your own key for a provider is used instead of the server's; a provider with no key is skipped.</p>
+  <p class="muted small">Providers are tried in this order. When one is rate limited, out of credits or down, the next one takes over automatically. A provider may have several keys: they are rotated round-robin and a key that hits its limit is parked while the others carry on. Your own keys are tried before the server's; a provider with no key is skipped.</p>
   <div class="table-wrap"><table>
-    <thead><tr><th>Use</th><th>Provider</th><th>Model (blank = default)</th><th>Key</th><th>Your API key</th></tr></thead>
+    <thead><tr><th>Use</th><th>Provider</th><th>Model (blank = default)</th><th>Keys</th><th>Your API keys (one per line)</th></tr></thead>
     {% for p in providers %}
     <tr>
       <td><input type="checkbox" name="use__{{ p.spec.name }}" value="1" {{ 'checked' if p.enabled }}></td>
       <td><strong>{{ p.spec.label }}</strong><div class="muted small">{{ p.spec.name }}{% if p.spec.docs %} · <a href="{{ p.spec.docs }}" target="_blank" rel="noopener">keys ↗</a>{% endif %}</div></td>
       <td><input type="text" name="model__{{ p.spec.name }}" value="{{ p.model }}" placeholder="{{ p.default_model }}"></td>
-      <td class="small">{% if p.user_key %}<span class="chip chip-green">yours</span>{% elif p.server_key %}<span class="chip chip-blue">server</span>{% elif not p.spec.needs_key %}<span class="chip chip-gray">none needed</span>{% else %}<span class="chip chip-amber">missing</span>{% endif %}</td>
-      <td><input type="password" name="key__{{ p.spec.name }}" autocomplete="off" placeholder="{{ 'replace' if p.user_key else 'paste key' }}">
+      <td class="small">{% if p.user_key %}<span class="chip chip-green">yours ×{{ p.user_keys }}</span>{% endif %}
+        {% if p.server_key %}<span class="chip chip-blue">server ×{{ p.server_keys }}</span>{% elif not p.user_key %}{% if not p.spec.needs_key %}<span class="chip chip-gray">none needed</span>{% else %}<span class="chip chip-amber">missing</span>{% endif %}{% endif %}</td>
+      <td><textarea name="keys__{{ p.spec.name }}" rows="2" autocomplete="off" spellcheck="false" class="secret-keys" style="font-family:monospace;-webkit-text-security:disc" placeholder="{{ ('replace all ' ~ p.user_keys) if p.user_key else 'one key per line' }}"></textarea>
         {% if p.user_key %}<label class="check small"><input type="checkbox" name="clear__{{ p.spec.name }}" value="1"> remove mine</label>{% endif %}</td>
     </tr>
     {% endfor %}
   </table></div>
+  <label class="check small"><input type="checkbox" id="show-keys"> show keys while typing</label>
+  <p class="muted small">Keys are masked while you type in Chrome, Edge and Safari. Firefox cannot mask a multi-line field, so paste keys there only when nobody is looking over your shoulder; saved keys are never shown again.</p>
+  <script>
+    (function () {
+      var toggle = document.getElementById("show-keys");
+      var areas = document.querySelectorAll("textarea.secret-keys");
+      if (!toggle) { return; }
+      toggle.addEventListener("change", function () {
+        areas.forEach(function (a) { a.style.webkitTextSecurity = toggle.checked ? "none" : "disc"; });
+      });
+    })();
+  </script>
   <div class="fields" style="margin-top:12px">
     <div class="field"><label>Failover order (comma separated provider names; unchecked ones are ignored)</label>
       <input type="text" name="provider_order" value="{{ prefs.get('llm_providers', '') }}" placeholder="claude, openai, gemini, groq"></div>

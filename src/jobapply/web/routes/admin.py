@@ -8,7 +8,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func
 from sqlmodel import select
 
-from jobapply.ai.providers import CATALOG, parse_order, provider_status, server_config
+from jobapply.ai.providers import health_key, parse_order, provider_status, server_configs
 from jobapply.config import get_settings
 from jobapply.models import Application, CollectorRun, LlmUsage, Role, User, utcnow
 from jobapply.switches import collect_interval, get_value, set_value
@@ -42,21 +42,32 @@ def admin_page(ctx: Ctx = Depends(admin_ctx)):
     runs = s.exec(select(CollectorRun).order_by(CollectorRun.started_at.desc()).limit(50)).all()
     settings = get_settings()
     order = parse_order(settings.llm_providers)
-    health = {h["key"].split(":")[0]: h for h in provider_status()}
-    providers = [
-        {
-            "spec": CATALOG[n],
-            "server_key": bool(server_config(n, settings).api_key),
-            "model": server_config(n, settings).model,
-            "health": health.get(n),
-        }
-        for n in order
-    ]
     usage_by_model = s.exec(
         select(LlmUsage.model, func.count(), func.sum(LlmUsage.input_tokens + LlmUsage.output_tokens))
         .where(LlmUsage.created_at >= month)
         .group_by(LlmUsage.model)
     ).all()
+    # llm_usage.model is "<provider>#<n>:<model>", so 30-day usage folds onto the key label
+    usage_by_label: dict[str, dict[str, int]] = {}
+    for model, calls, toks in usage_by_model:
+        u = usage_by_label.setdefault(str(model).split(":")[0], {"calls": 0, "tokens": 0})
+        u["calls"] += calls or 0
+        u["tokens"] += toks or 0
+    health = {h["key"]: h for h in provider_status()}
+    providers = []
+    for n in order:
+        for cfg in server_configs(n, settings):  # one row per server key, labelled "<provider> key #n (…last4)"
+            providers.append(
+                {
+                    "spec": cfg.spec,
+                    "label": cfg.label,
+                    "title": f"{cfg.spec.name} key #{cfg.index} ({cfg.key_hint})" if cfg.api_key else cfg.spec.name,
+                    "server_key": bool(cfg.api_key),
+                    "model": cfg.model,
+                    "health": health.get(health_key(cfg)),
+                    "usage": usage_by_label.get(cfg.label, {"calls": 0, "tokens": 0}),
+                }
+            )
     return ctx.render(
         "admin.html",
         users=users,

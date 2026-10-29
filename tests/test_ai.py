@@ -79,7 +79,7 @@ def test_score_user_queues_above_threshold(session, demo):
     assert "Postgres" not in apps[bad.id].score_reason
 
 
-def test_score_user_records_failures_and_stops_on_retryable(session, demo):
+def test_score_user_records_failures_and_switches_to_heuristics_on_retryable(session, demo):
     jobs = [_job(session, key=f"k{i}") for i in range(3)]
     for j in jobs:
         session.add(Application(user_id=demo.id, job_id=j.id))
@@ -96,10 +96,57 @@ def test_score_user_records_failures_and_stops_on_retryable(session, demo):
                     raise LLMError("429", retryable=True)
             return super().complete(request)
 
-    counts = score_user(session, demo, Flaky())
-    assert counts["failed"] == 2 and counts["scored"] == 0
-    statuses = [a.status for a in session.exec(select(Application)).all()]
-    assert statuses.count(AppStatus.new) == 3  # nothing changed status; rerun picks them up
+    llm = Flaky()
+    counts = score_user(session, demo, llm)
+    # job 1: bad request, recorded and left `new`; job 2: chain exhausted, so it and job 3 are scored
+    # by the heuristics instead of waiting for a provider (docs/NO_AI_MODE.md).
+    assert counts["failed"] == 1 and counts["scored"] == 2
+    apps = session.exec(select(Application)).all()
+    assert [a.status for a in apps].count(AppStatus.new) == 1
+    assert sum(1 for a in apps if (a.score_reason or "").startswith("[heuristic]")) == 2
+    assert len([c for c in llm.calls if c.task == "score"]) == 2  # no third LLM attempt this run
+
+
+def test_score_user_keeps_live_chain_after_a_non_retryable_job(session, demo):
+    """Regression: FailoverLLM used to raise `all providers failed` with retryable=True even when every
+    provider failed with a per-request error, so one bad job downgraded the rest of the run to heuristics."""
+    from jobapply.ai import providers
+    from jobapply.ai.base import LLM
+    from jobapply.ai.providers import CATALOG, FailoverLLM, ProviderConfig
+
+    providers.reset_health()
+    jobs = [_job(session, key=f"k{i}", title=f"Backend Engineer {i}") for i in range(3)]
+    for j in jobs:
+        session.add(Application(user_id=demo.id, job_id=j.id))
+    session.commit()
+
+    class Stub(LLM):
+        name = "stub"
+
+        def __init__(self):
+            self.calls = []
+            self.inner = FakeLLM()
+
+        def complete(self, request):
+            self.calls.append(request)
+            if request.task == "score" and "Backend Engineer 0" in request.prompt:
+                raise LLMError("reply did not match ScoreResult", retryable=False)
+            return self.inner.complete(request)
+
+    stub = Stub()
+    cfg = ProviderConfig(CATALOG["openai"], "k", "gpt", CATALOG["openai"].base_url)
+    chain = FailoverLLM.from_configs([cfg], cooldown_minutes=10)
+    chain.entries[0].llm = stub
+    try:
+        counts = score_user(session, demo, chain, prepare=False)
+    finally:
+        providers.reset_health()
+    assert counts["failed"] == 1 and counts["scored"] == 2
+    apps = {a.job_id: a for a in session.exec(select(Application)).all()}
+    assert apps[jobs[0].id].status == AppStatus.new and "scoring failed" in apps[jobs[0].id].error
+    # Jobs 2 and 3 were still scored by the chain, not by the heuristics.
+    assert all(not (apps[j.id].score_reason or "").startswith("[heuristic]") for j in jobs[1:])
+    assert len([c for c in stub.calls if c.task == "score"]) == 3
 
 
 def test_resume_variant_cached_per_company(session, demo):
@@ -265,3 +312,209 @@ def test_claude_parses_text_when_sdk_gives_no_parsed_output():
 
 def test_answer_result_schema_roundtrip():
     assert AnswerResult.model_validate_json('{"answer": "yes", "confidence": 80}').confidence == 80
+
+
+# ----------------------------------------------------------- no-AI mode (docs/NO_AI_MODE.md)
+
+
+def test_heuristic_score_reads_filters_and_recency(session, demo):
+    from datetime import timedelta
+
+    from jobapply.ai.heuristics import heuristic_answer, score_job_heuristic
+    from jobapply.models import utcnow
+
+    filters = {"roles": ["backend engineer"], "seniority": ["mid", "senior"], "locations": ["remote"],
+               "keywords_exclude": ["manager"]}
+    fresh = Job(dedupe_key="f", title="Senior Backend Engineer", company="A", description=DESC, remote=True,
+                posted_at=utcnow() - timedelta(hours=2))
+    stale = Job(dedupe_key="s", title="Senior Backend Engineer", company="A", description=DESC, remote=True,
+                posted_at=utcnow() - timedelta(days=20))
+    r_fresh = score_job_heuristic(demo, filters, fresh)
+    r_stale = score_job_heuristic(demo, filters, stale)
+    assert r_fresh.matched_skills == ["aws", "go", "postgres", "python"] and r_fresh.missing_skills == ["kafka"]
+    assert r_fresh.score > r_stale.score >= 70
+    assert r_fresh == score_job_heuristic(demo, filters, fresh)  # deterministic
+    # Same function the fake uses.
+    fake = FakeLLM()._score({"profile": {**DEMO_PROFILE, "target_roles": ["backend engineer"]},
+                             "job": {"title": stale.title, "description": DESC}})
+    assert fake.matched_skills == r_fresh.matched_skills
+    mgr = Job(dedupe_key="m", title="Engineering Manager, Backend", company="A", description=DESC, remote=False,
+              location="Berlin")
+    r_mgr = score_job_heuristic(demo, filters, mgr)
+    assert r_mgr.score < r_stale.score - 30
+    assert "excluded word" in r_mgr.reason and "seniority manager" in r_mgr.reason and "location" in r_mgr.reason
+    assert 0 <= score_job_heuristic({}, {}, Job(dedupe_key="e", title="", company="")).score <= 100
+
+    # Closed questions from the vault; unknown questions stay unanswered so the LLM (if any) gets them.
+    assert heuristic_answer("How many years of Python experience do you have?", None, demo) == ("6", 95)
+    assert heuristic_answer("Years of experience with Kubernetes", None, DEMO_PROFILE) == ("2", 95)
+    assert heuristic_answer("Are you willing to relocate?", ["Yes", "No"], demo) == ("Yes", 90)
+    assert heuristic_answer("Do you require visa sponsorship?", ["Yes", "No"], demo) == ("No", 90)
+    assert heuristic_answer("Are you legally authorized to work in India?", ["Yes", "No"], demo)[0] == "Yes"
+    assert heuristic_answer("What is your notice period?", None, demo) == ("30 days", 85)
+    assert heuristic_answer("Expected CTC", None, demo) == ("40 LPA", 85)
+    assert heuristic_answer("When can you start?", None, demo)[0] == "30 days"
+    assert heuristic_answer("Total years of experience", None, demo) == ("6", 85)
+    assert heuristic_answer("Why do you want to join us?", None, demo) == (None, 0)
+    assert heuristic_answer("Preferred office", ["Paris", "Tokyo"], demo) == (None, 0)
+    assert heuristic_answer("LinkedIn profile", None, {}) == (None, 0)
+
+
+def test_heuristic_answer_rules_are_anchored(demo):
+    """Loose matches used to fill the wrong profile value at 85-95 confidence (above the review threshold)."""
+    from jobapply.ai.heuristics import heuristic_answer
+
+    # Not salary questions, not contact questions, not a start date: nobody answers, the LLM gets them.
+    for q in ("Expected graduation date", "Desired job location", "Describe your experience with mobile development",
+              "What is your availability for interviews this week?", "Tell us about your email marketing work",
+              "Which phone platforms have you shipped on?"):
+        assert heuristic_answer(q, None, demo) == (None, 0), q
+    # The anchored forms still answer.
+    assert heuristic_answer("Expected CTC", None, demo) == ("40 LPA", 85)
+    assert heuristic_answer("What is your desired salary?", None, demo) == ("40 LPA", 85)
+    assert heuristic_answer("Salary expectation (annual)", None, demo) == ("40 LPA", 85)
+    assert heuristic_answer("Phone number", None, demo) == ("+91 98765 43210", 95)
+    assert heuristic_answer("Phone", None, demo) == ("+91 98765 43210", 95)
+    assert heuristic_answer("Mobile no.", None, demo) == ("+91 98765 43210", 95)
+    assert heuristic_answer("Email address", None, demo) == ("demo.applies@example.com", 95)
+    assert heuristic_answer("Email", None, demo) == ("demo.applies@example.com", 95)
+    assert heuristic_answer("When are you available to start?", None, demo) == ("30 days", 85)
+
+
+def test_heuristic_work_authorization_needs_profile_support(demo):
+    from jobapply.ai.heuristics import heuristic_answer
+
+    q = "Are you legally authorized to work in the United States?"
+    # An Indian citizen is not declared authorized for the US...
+    assert heuristic_answer(q, ["Yes", "No"], demo) == (None, 0)
+    # ...but is for India, and for a question that names no country.
+    assert heuristic_answer("Are you legally authorized to work in India?", ["Yes", "No"], demo) == ("Yes", 70)
+    assert heuristic_answer("Are you authorized to work in your current location?", ["Yes", "No"], demo)[0] == "Yes"
+    assert heuristic_answer("Do you have the right to work without sponsorship?", ["Yes", "No"], demo) == ("Yes", 70)
+    # Without an explicit needs_sponsorship there is no boolean to give: no default "Yes".
+    no_sponsor = {**DEMO_PROFILE}
+    del no_sponsor["needs_sponsorship"]
+    assert heuristic_answer("Are you legally authorized to work in India?", ["Yes", "No"], no_sponsor) == (None, 0)
+    assert heuristic_answer("Are you eligible to work here?", ["Yes", "No"], no_sponsor) == (None, 0)
+    # Free-text authorization keeps the profile wording, country permitting.
+    assert heuristic_answer("Work authorization status", None, demo) == ("Indian citizen", 85)
+    us = {**DEMO_PROFILE, "location": "Austin, TX", "work_authorization": "US citizen"}
+    assert heuristic_answer(q, ["Yes", "No"], us) == ("Yes", 70)
+
+
+def test_heuristic_score_ignores_go_in_everyday_phrases(demo):
+    from jobapply.ai.heuristics import score_job_heuristic
+
+    no_go = {**DEMO_PROFILE, "skills": {"Python": 6}}
+    phrase = Job(dedupe_key="g1", title="Backend Engineer", company="A",
+                 description="Join our go-to-market engineering team working in Python. Ready to go? Let's go!")
+    r = score_job_heuristic(no_go, {}, phrase)
+    assert r.missing_skills == [] and r.matched_skills == ["python"]
+    lang = Job(dedupe_key="g2", title="Backend Engineer", company="A",
+               description="Services in Python and Go; Go experience required.")
+    r = score_job_heuristic(no_go, {}, lang)
+    assert r.missing_skills == ["go"]
+    golang = Job(dedupe_key="g3", title="Dev", company="A", description="Golang and Python")
+    assert score_job_heuristic(DEMO_PROFILE, {}, golang).matched_skills == ["go", "python"]
+
+
+def test_heuristic_guards_blank_profile_values():
+    from jobapply.ai.heuristics import cover_letter_template, score_job_heuristic
+
+    profile = {"first_name": None, "last_name": None, "skills": {"": 2, " ": 1, "AWS": 4, "FastAPI": 3,
+                                                                 "PostgreSQL": 5}}
+    job = Job(dedupe_key="b", title="Backend Engineer", company="Acme", description="AWS, FastAPI and PostgreSQL")
+    r = score_job_heuristic(profile, {}, job)
+    assert r.matched_skills == ["aws", "fastapi", "postgresql"] and "Matches ," not in r.reason
+    letter = cover_letter_template(profile, job)
+    assert "AWS, FastAPI, PostgreSQL" in letter  # brand casing kept
+    assert "None" not in letter and letter.endswith("Candidate")
+    assert "Python, FastAPI, Postgres" in cover_letter_template(DEMO_PROFILE, job)
+
+
+def test_answer_source_banks_heuristic_answers_for_review(session, demo):
+    from jobapply.forms.runner import AnswerSource
+
+    src = AnswerSource(session, None, demo)
+    assert src.answer("What is your notice period?") == ("30 days", 85)
+    row = session.exec(select(AnswerBank).where(AnswerBank.user_id == demo.id)).one()
+    assert row.source == "heuristic" and row.approved is False and row.answer == "30 days"
+    # The user corrects it on the Answers page; the corrected value wins next time.
+    row.answer, row.approved = "45 days", True
+    session.add(row)
+    session.commit()
+    assert src.answer("What is your notice period?") == ("45 days", 100)
+    assert src.answer("Why do you want to join us?") == (None, 0)  # nothing banked for an unanswered question
+    assert session.exec(select(AnswerBank).where(AnswerBank.user_id == demo.id)).one().id == row.id
+
+
+def test_prepare_application_without_llm_uses_master_resume_and_template(session, demo):
+    from jobapply.ai.heuristics import cover_letter_template
+
+    job = _job(session)
+    app = Application(user_id=demo.id, job_id=job.id)
+    session.add(app)
+    session.commit()
+    prepare_application(session, None, demo, app, job)
+    assert app.cover_letter == cover_letter_template(demo, job, "professional")
+    assert app.cover_letter.startswith("Dear Acme team") and "Demo User" in app.cover_letter
+    assert app.resume_variant and app.resume_variant.endswith("master.pdf")
+    text = "\n".join(p.extract_text() for p in PdfReader(app.resume_variant).pages)
+    assert "Demo User" in text and "Example Systems" in text and "Startup Labs" in text
+    assert "Senior Software Engineer" in text  # the master label, not the posting title
+    assert session.exec(select(LlmUsage)).first() is None
+    # An uploaded PDF wins over the rendered master.
+    uploaded = get_settings().resumes_dir / "u.pdf"
+    uploaded.parent.mkdir(parents=True, exist_ok=True)
+    uploaded.write_bytes(b"%PDF-1.4 stub")
+    demo.profile = {**demo.profile, "resumes": [{"name": "u.pdf", "path": str(uploaded)}]}
+    app2 = Application(user_id=demo.id, job_id=job.id)
+    prepare_application(session, None, demo, app2, job)
+    assert app2.resume_variant == str(uploaded)
+
+    # And an LLM that fails never raises either.
+    class Broken(FakeLLM):
+        def complete(self, request):
+            raise LLMError("down", retryable=True)
+
+    app3 = Application(user_id=demo.id, job_id=job.id)
+    prepare_application(session, Broken(), demo, app3, job)
+    assert app3.cover_letter == app.cover_letter and app3.resume_variant == str(uploaded)
+
+
+def test_score_user_without_llm_marks_heuristic(session, demo):
+    good = _job(session, key="good")
+    bad = _job(session, title="Frontend Designer", company="Beta", desc="Figma, CSS, Webflow", key="bad")
+    for j in (good, bad):
+        session.add(Application(user_id=demo.id, job_id=j.id))
+    session.commit()
+    counts = score_user(session, demo, None)
+    assert counts == {"scored": 2, "queued": 1, "below": 1, "failed": 0}
+    apps = {a.job_id: a for a in session.exec(select(Application)).all()}
+    assert apps[good.id].status == AppStatus.queued and apps[good.id].score_reason.startswith("[heuristic] ")
+    assert apps[good.id].cover_letter.startswith("Dear Acme team") and apps[good.id].resume_variant.endswith(".pdf")
+    assert apps[bad.id].status == AppStatus.scored and apps[bad.id].score_reason.startswith("[heuristic] ")
+    assert session.exec(select(LlmUsage)).first() is None
+
+
+def test_ai_mode_off_never_builds_an_llm(session, demo):
+    from jobapply.ai.service import ai_mode
+
+    assert ai_mode(demo) == "auto" and ai_mode(None) == "auto"
+    demo.preferences = {**demo.preferences, "ai_mode": "off"}
+    assert ai_mode(demo) == "off"
+    with pytest.raises(LLMError):
+        get_llm(session, demo, backend="fake")  # even a configured backend is skipped
+    demo.preferences = {**demo.preferences, "ai_mode": "nonsense"}
+    assert ai_mode(demo) == "auto"
+
+
+def test_answer_question_without_llm_returns_empty(session, demo):
+    from jobapply.forms.answers import question_hash
+
+    r = answer_question(session, None, demo, "Why us?")
+    assert r.answer == "" and r.confidence == 0
+    session.add(AnswerBank(user_id=demo.id, question_hash=question_hash("Why us?"), question="Why us?",
+                           answer="Because.", approved=True))
+    session.commit()
+    assert answer_question(session, None, demo, "Why us?").answer == "Because."

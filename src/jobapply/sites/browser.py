@@ -8,8 +8,11 @@ build is missing we fall back to the system Chrome (`channel="chrome"`).
 
 from __future__ import annotations
 
+import json
+import os
 import random
 import re
+import shutil
 import time
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +46,73 @@ def profile_dir(user_id: int, site: str) -> Path:
     path = get_settings().browser_profiles_dir / str(int(user_id)) / site
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+IMPORT_MARKER = ".imported-from.json"
+# Session state only: cookies, web storage and preferences. Never Login Data (saved passwords), History,
+# Web Data (autofill), Bookmarks or any cache.
+_SESSION_FILES = ["Network/Cookies", "Network/Cookies-journal", "Preferences", "Secure Preferences"]
+_SESSION_DIRS = ["Local Storage", "Session Storage"]
+
+
+def chrome_user_data_dir() -> Path:
+    return Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "User Data"
+
+
+def chrome_profile_folder(profile_name: str, user_data: Path | None = None) -> str:
+    """Folder (`Default`, `Profile 2`, ...) of the Chrome profile the user sees as `profile_name`."""
+    user_data = user_data or chrome_user_data_dir()
+    state = json.loads((user_data / "Local State").read_text(encoding="utf-8"))
+    cache = state.get("profile", {}).get("info_cache", {})
+    wanted = profile_name.strip().lower()
+    hits = [folder for folder, info in cache.items() if str(info.get("name", "")).strip().lower() == wanted]
+    if not hits:
+        names = sorted(str(i.get("name", "")) for i in cache.values())
+        raise ValueError(f"no Chrome profile named {profile_name!r}; profiles: {names}")
+    if len(hits) > 1:
+        raise ValueError(f"{len(hits)} Chrome profiles are named {profile_name!r} ({hits}); rename one first")
+    return hits[0]
+
+
+def import_chrome_session(user_id: int, site: str, profile_name: str, user_data: Path | None = None) -> Path:
+    """Copy the signed-in session of one Chrome profile into the tool's own profile for `user_id`/`site`.
+
+    Only session files are copied (see `_SESSION_FILES` / `_SESSION_DIRS`) plus the `os_crypt` entry of
+    Local State that Chrome needs to decrypt them. The copy is launched with the installed Chrome
+    (`channel="chrome"`), because cookies are app-bound encrypted and only that binary can read them.
+    The user's real Chrome profile is never modified.
+    """
+    user_data = user_data or chrome_user_data_dir()
+    folder = chrome_profile_folder(profile_name, user_data)
+    src = user_data / folder
+    dest = profile_dir(user_id, site)
+    for child in dest.iterdir():
+        shutil.rmtree(child) if child.is_dir() else child.unlink()
+    state = json.loads((user_data / "Local State").read_text(encoding="utf-8"))
+    (dest / "Local State").write_text(json.dumps({"os_crypt": state.get("os_crypt", {})}), encoding="utf-8")
+    target = dest / "Default"
+    copied: list[str] = []
+    for rel in _SESSION_FILES:
+        f = src / rel
+        if f.exists():
+            (target / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, target / rel)
+            copied.append(rel)
+    for rel in _SESSION_DIRS:
+        d = src / rel
+        if d.is_dir():
+            shutil.copytree(d, target / rel, dirs_exist_ok=True)
+            copied.append(rel + "/")
+    (dest / IMPORT_MARKER).write_text(
+        json.dumps({"chrome_profile": profile_name, "folder": folder, "copied": copied,
+                    "imported_at": datetime.now().astimezone().isoformat()}, indent=1), encoding="utf-8")
+    log.info("chrome session imported", user_id=user_id, site=site, chrome_profile=profile_name, folder=folder,
+             copied=copied)
+    return dest
+
+
+def is_imported_profile(user_data: Path) -> bool:
+    return (user_data / IMPORT_MARKER).exists()
 
 
 def machine_timezone() -> str:
@@ -82,7 +152,10 @@ def launch_persistent(pw: Any, user_id: int, site: str, headless: bool | None = 
         "args": list(_LAUNCH_ARGS),
         "ignore_default_args": ["--enable-automation"],
     }
-    if settings.chromium_executable:
+    if is_imported_profile(user_data):
+        # App-bound cookie encryption: only the installed Chrome can read a session copied from it.
+        kwargs["channel"] = "chrome"
+    elif settings.chromium_executable:
         kwargs["executable_path"] = settings.chromium_executable
     elif headless:
         kwargs["channel"] = "chromium"
@@ -140,4 +213,5 @@ def is_active_hours(now: datetime | None = None, spec: str = "08:00-23:00") -> b
 
 
 __all__ = ["profile_dir", "launch_persistent", "human_pause", "is_active_hours", "parse_active_hours",
-           "machine_timezone", "DESKTOP_USER_AGENT"]
+           "machine_timezone", "DESKTOP_USER_AGENT", "import_chrome_session", "chrome_profile_folder",
+           "is_imported_profile"]
