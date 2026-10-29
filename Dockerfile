@@ -7,7 +7,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /bin/
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project --extra jobspy
-RUN uv run playwright install --with-deps chromium && rm -rf /var/lib/apt/lists/*
+RUN uv run --no-project --no-sync playwright install --with-deps chromium && rm -rf /var/lib/apt/lists/*
 COPY . .
 RUN uv sync --frozen --no-dev --extra jobspy
 RUN useradd --system --create-home --uid 1000 jobapply && mkdir -p /app/data && chown -R jobapply:jobapply /app /ms-playwright
