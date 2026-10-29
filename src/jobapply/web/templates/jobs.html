@@ -15,6 +15,15 @@
     {% for m, t in age_presets %}
     <option value="{{ m }}" {{ 'selected' if params.get('within') == m|string }}>{{ t }}</option>{% endfor %}
   </select></div>
+  <div><label>Role / field</label><select name="field">
+    <option value="">all roles</option>
+    {% for f in career_fields %}
+    <optgroup label="{{ f.label }}">
+      <option value="{{ f.key }}:*" {{ 'selected' if params.get('field') == f.key ~ ':*' }}>Any {{ f.label }} role</option>
+      {% for sr in f.subroles %}
+      <option value="{{ f.key }}:{{ sr.key }}" {{ 'selected' if params.get('field') == f.key ~ ':' ~ sr.key }}>{{ sr.label }}</option>{% endfor %}
+    </optgroup>{% endfor %}
+  </select></div>
   <div><label>Source</label><select name="source"><option value="">all</option>
     {% for s in sources %}<option {{ 'selected' if params.get('source') == s }}>{{ s }}</option>{% endfor %}</select></div>
   <div><label>Min score</label><input type="number" name="min_score" min="0" max="100" value="{{ params.get('min_score', '') }}"></div>

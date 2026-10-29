@@ -113,6 +113,14 @@ def _query(ctx: Ctx, request: Request):
         stmt = stmt.where(Job.salary_max >= salary)
     if company := p.get("company"):
         stmt = stmt.where(Job.company.ilike(f"%{company}%"))
+    if field_sel := p.get("field"):
+        # Career-field / role filter from the taxonomy: expand the selection (e.g. "cybersecurity:*" or
+        # "cybersecurity:soc") to its title synonyms and match any of them in the job title.
+        from jobapply.roles.taxonomy import titles_for
+
+        titles = titles_for([field_sel])
+        if titles:
+            stmt = stmt.where(or_(*[Job.title.ilike(f"%{t}%") for t in titles]))
     if q := p.get("q"):
         stmt = stmt.where(or_(Job.title.ilike(f"%{q}%"), Job.description.ilike(f"%{q}%")))
     if (status := p.get("status")) and scope != "all":
@@ -128,6 +136,8 @@ def _query(ctx: Ctx, request: Request):
 
 @router.get("/jobs")
 def jobs_page(request: Request, ctx: Ctx = Depends(get_ctx)):
+    from jobapply.roles.taxonomy import all_fields
+
     stmt, page = _query(ctx, request)
     rows = ctx.session.exec(stmt).all()
     sources = ctx.session.exec(select(Job.source).distinct().order_by(Job.source)).all()
@@ -147,6 +157,7 @@ def jobs_page(request: Request, ctx: Ctx = Depends(get_ctx)):
         age_presets=AGE_PRESETS,
         rel_age=rel_age,
         is_fresh=is_fresh,
+        career_fields=all_fields(),
     )
 
 
