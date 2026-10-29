@@ -13,8 +13,8 @@ jobspy_sites: []
 # jobs page uses. Age is in MINUTES so a 30-minute collect interval only sees fresh postings.
 # Guests get rate limited (HTTP 429/999); keep max_results and max_details modest.
 linkedin:
-  enabled: false
-  minutes_old: 60          # f_TPR, minimum 1
+  enabled: true
+  minutes_old: 2880          # last 48h
   location: "India"        # free text; geo_id below is more precise when set
   geo_id: null             # e.g. 102713980 for India, 92000000 for Worldwide
   remote_only: false       # f_WT=2
