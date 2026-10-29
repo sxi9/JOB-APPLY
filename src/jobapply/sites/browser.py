@@ -115,6 +115,74 @@ def is_imported_profile(user_data: Path) -> bool:
     return (user_data / IMPORT_MARKER).exists()
 
 
+_SAMESITE = {"lax": "Lax", "strict": "Strict", "none": "None", "no_restriction": "None",
+             "unspecified": "Lax", "": "Lax"}
+
+
+def _clean_domain(domain: str) -> str:
+    """Strip anything but the hostname. A domain pasted through Markdown can arrive as
+    `[www.linkedin.com](https://www.linkedin.com)`; keep the leading-dot flag and the host."""
+    raw = str(domain or "").strip()
+    dot = raw.startswith(".")
+    m = re.search(r"([a-z0-9.-]+\.[a-z]{2,})", raw, re.I)
+    host = m.group(1) if m else raw.lstrip(".")
+    return ("." + host) if dot and not host.startswith(".") else host
+
+
+def cookies_from_export(data: Any, allowed: tuple[str, ...] = ("linkedin.com",)) -> list[dict[str, Any]]:
+    """Convert a browser cookie export (the common extension JSON: a list of
+    {name,value,domain,path,expirationDate,secure,httpOnly,sameSite,session}) into the shape
+    Playwright's add_cookies wants. Only cookies whose host ends with one of `allowed` are kept."""
+    rows = data.get("cookies", data) if isinstance(data, dict) else data
+    if not isinstance(rows, list):
+        raise ValueError("cookie file must be a JSON array of cookies (or {cookies:[...]})")
+    out: list[dict[str, Any]] = []
+    for c in rows:
+        if not isinstance(c, dict) or not c.get("name"):
+            continue
+        domain = _clean_domain(c.get("domain", ""))
+        host = domain.lstrip(".")
+        if allowed and not any(host == a or host.endswith("." + a) for a in allowed):
+            continue
+        cookie: dict[str, Any] = {
+            "name": str(c["name"]),
+            "value": str(c.get("value", "")),
+            "domain": domain,
+            "path": str(c.get("path") or "/"),
+            "secure": bool(c.get("secure", False)),
+            "httpOnly": bool(c.get("httpOnly", False)),
+            "sameSite": _SAMESITE.get(str(c.get("sameSite") or "").lower(), "Lax"),
+        }
+        exp = c.get("expirationDate") or c.get("expires")
+        if exp and not c.get("session"):
+            cookie["expires"] = int(float(exp))
+        out.append(cookie)
+    if not out:
+        raise ValueError(f"no cookies for {allowed} found in the export")
+    return out
+
+
+def import_cookies_file(user_id: int, site: str, path: Path, allowed: tuple[str, ...] = ("linkedin.com",)) -> int:
+    """Load a cookie export from `path` into the persistent profile for `user_id`/`site` via a short
+    headless Playwright session, so the saved profile is logged in. Returns the number of cookies set.
+    The file is read from disk by this process; its values are never logged or returned."""
+    import json as _json
+
+    from playwright.sync_api import sync_playwright
+
+    data = _json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    cookies = cookies_from_export(data, allowed)
+    with sync_playwright() as pw:
+        context = launch_persistent(pw, user_id, site, headless=True)
+        try:
+            context.add_cookies(cookies)
+        finally:
+            context.close()
+    log.info("cookies imported", user_id=user_id, site=site, count=len(cookies),
+             names=sorted({c["name"] for c in cookies}))
+    return len(cookies)
+
+
 def machine_timezone() -> str:
     """IANA name of the machine's timezone, falling back to UTC when it cannot be resolved."""
     try:
@@ -214,4 +282,4 @@ def is_active_hours(now: datetime | None = None, spec: str = "08:00-23:00") -> b
 
 __all__ = ["profile_dir", "launch_persistent", "human_pause", "is_active_hours", "parse_active_hours",
            "machine_timezone", "DESKTOP_USER_AGENT", "import_chrome_session", "chrome_profile_folder",
-           "is_imported_profile"]
+           "is_imported_profile", "cookies_from_export", "import_cookies_file"]

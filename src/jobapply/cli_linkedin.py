@@ -75,6 +75,29 @@ def import_chrome(user: str = typer.Option(..., "--user", "-u", help="Username")
         raise typer.Exit(code=0 if status == "ok" else 1)
 
 
+@linkedin_app.command("import-cookies")
+def import_cookies(user: str = typer.Option(..., "--user", "-u", help="Username"),
+                   path: str = typer.Option(..., "--file", "-f", help="Cookie export JSON (linkedin.com only)"),
+                   check_after: bool = typer.Option(True, "--check/--no-check",
+                                                    help="Open the feed afterwards and report the status")) -> None:
+    """Load a LinkedIn cookie export into this user's profile, so no interactive login is needed.
+    Export the file yourself (a cookie-export extension), save it locally, and pass its path; only
+    linkedin.com cookies are used and their values are never printed."""
+    from pathlib import Path
+
+    from jobapply.db import session_scope
+    from jobapply.sites.browser import import_cookies_file
+
+    with session_scope() as session:
+        u = _load_user(session, user)
+        count = import_cookies_file(u.id, "linkedin", Path(path))
+    typer.echo(f"imported {count} linkedin cookie(s) into the profile for {user!r}")
+    if check_after:
+        status = _with_session(user, None, lambda s, page: s.check(page))
+        typer.echo(f"linkedin session: {status}")
+        raise typer.Exit(code=0 if status == "ok" else 1)
+
+
 @linkedin_app.command()
 def check(user: str = typer.Option(..., "--user", "-u", help="Username"),
           headless: bool = typer.Option(None, "--headless/--headful",
