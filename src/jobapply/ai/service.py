@@ -11,8 +11,17 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from jobapply.ai import prompts
-from jobapply.ai.base import LLM, AnswerResult, LLMError, LLMRequest, LLMResult, ResumeVariant, ScoreResult
-from jobapply.ai.heuristics import cover_letter_template, score_job_heuristic
+from jobapply.ai.base import (
+    LLM,
+    AnswerResult,
+    LLMError,
+    LLMRequest,
+    LLMResult,
+    RecoverResult,
+    ResumeVariant,
+    ScoreResult,
+)
+from jobapply.ai.heuristics import application_message_template, cover_letter_template, score_job_heuristic
 from jobapply.ai.providers import FailoverLLM, ProviderConfig, parse_keys, parse_order, server_configs
 from jobapply.ai.resume import render_resume_pdf
 from jobapply.config import get_settings
@@ -242,6 +251,59 @@ def answer_question(session: Session, llm: LLM | None, user: User, question: str
     return result
 
 
+def recover_field(session: Session, llm: LLM, user: User, *, question: str, value_tried: str, field_type: str,
+                  options: list[str] | None = None, error_text: str = "", dom_snippet: str = "",
+                  job: Job | None = None) -> RecoverResult:
+    """Ask the LLM to correct one form field that would not fill (or showed an inline error).
+
+    Returns the action (`retype`/`pick_option`/`reformat`/`skip`) and a corrected value. The caller applies it
+    once and re-verifies. There is no heuristic fallback: without an LLM the form runner does not call this, so
+    the no-AI behaviour (log and continue) is unchanged.
+    """
+    options = options or []
+    req = LLMRequest(
+        task="recover_field", schema=RecoverResult, max_tokens=1024,
+        system=prompts.RECOVER_SYSTEM.format(profile=prompts.profile_text(user)),
+        prompt=prompts.recover_prompt(question, value_tried, field_type, options, error_text, dom_snippet),
+        context={"profile": _profile_ctx(user), "question": question, "value": value_tried,
+                 "field_type": field_type, "options": options, "error": error_text, "dom": dom_snippet,
+                 "job": _job_ctx(job) if job else {}},
+    )
+    result = run(session, llm, user, req).as_(RecoverResult)
+    result.action = (result.action or "").strip().lower()
+    if result.action not in ("retype", "pick_option", "reformat", "skip"):
+        result.action = "skip"
+    return result
+
+
+def application_message(session: Session, llm: LLM | None, user: User, job: Job, app: Application) -> str:
+    """A short, specific note for the application's free-text "anything else / message to the hiring team"
+    field, grounded in the profile and THIS job. Reusable later as a LinkedIn / recruiter note.
+
+    With no LLM (or on an LLM failure) this falls back to `application_message_template`, so it never raises.
+    """
+    tone = (user.preferences or {}).get("cover_letter_tone", "professional")
+    if llm is not None:
+        try:
+            req = LLMRequest(
+                task="application_message", max_tokens=1024,
+                system=prompts.APP_MESSAGE_SYSTEM.format(tone=tone, company=job.company,
+                                                         profile=prompts.profile_text(user)),
+                prompt="Write the short message for this posting.\n\n" + prompts.job_text(job, 6000),
+                context={"profile": _profile_ctx(user), "job": _job_ctx(job), "tone": tone},
+            )
+            text = run(session, llm, user, req).text.strip()
+            if text:
+                return text
+        except LLMError as exc:
+            log.warning("application message via LLM failed, using template", user=user.username, job=job.id,
+                        error=str(exc))
+        except Exception as exc:  # noqa: BLE001 - a non-LLMError provider failure must not break queueing
+            log.warning("application message errored, using template", user=user.username, job=job.id,
+                        error=f"{type(exc).__name__}: {exc}")
+    return application_message_template(user, job, tone)
+
+
 def master_resume_pdf(user: User) -> Path:
     """The user's resume with no tailoring: the uploaded file when there is one, else the master JSON
     Resume rendered once to `variants/master.pdf` (re-rendered when the profile changes).
@@ -290,6 +352,9 @@ def prepare_application(session: Session, llm: LLM | None, user: User, app: Appl
             except LLMError as exc:
                 log.warning("cover letter via LLM failed, using template", user=user.username, job=job.id,
                             error=str(exc))
+            except Exception as exc:  # noqa: BLE001 - a non-LLMError provider failure must not stop queueing
+                log.warning("cover letter errored, using template", user=user.username, job=job.id,
+                            error=f"{type(exc).__name__}: {exc}")
         if not app.cover_letter:
             tone = (user.preferences or {}).get("cover_letter_tone", "professional")
             app.cover_letter = cover_letter_template(user, job, tone)
@@ -310,6 +375,9 @@ def prepare_application(session: Session, llm: LLM | None, user: User, app: Appl
             except Exception as exc:  # a broken master must not stop the application from queueing
                 log.warning("master resume not available", user=user.username, error=f"{type(exc).__name__}: {exc}")
         app.resume_variant = str(resume) if resume else None
+    if not app.message:
+        # application_message falls back to the template internally, so this never raises without an LLM.
+        app.message = application_message(session, llm, user, job, app)
     app.updated_at = utcnow()
     session.add(app)
 

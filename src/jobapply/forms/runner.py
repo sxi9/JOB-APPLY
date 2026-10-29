@@ -79,6 +79,47 @@ SUBMIT_GUARD_JS = r"""
 OPTION_NOTICES = {"no options", "no results", "no results found", "loading...", "loading", "type to search",
                   "start typing", "powered by google"}
 
+# The visible validation message next to a field, if any: aria-describedby when aria-invalid, else the nearest
+# visible .error / [role=alert] / "invalid" element that is not a container wrapping the field itself. Used only
+# when an LLM is present, to decide whether a filled value needs an AI-guided correction.
+FIELD_ERROR_JS = r"""
+(sel) => {
+  const el = document.querySelector(sel);
+  if (!el) return '';
+  const vis = (n) => { if (!n) return false; const s = window.getComputedStyle(n);
+    if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
+    const r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const txt = (n) => ((n && (n.innerText || n.textContent)) || '').trim();
+  if (el.getAttribute('aria-invalid') === 'true') {
+    for (const id of (el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)) {
+      const d = document.getElementById(id);
+      if (d && vis(d) && txt(d)) return txt(d);
+    }
+  }
+  const SEL = '.error, [class*="error"], [class*="invalid"], .field-error, .invalid-feedback, .help-block, '
+    + '[role=alert]';
+  let n = el;
+  for (let i = 0; i < 5 && n && n !== document.body; i++, n = n.parentElement) {
+    for (const c of n.querySelectorAll(SEL)) {
+      if (c === el || c.contains(el)) continue;  // a wrapper with a has-error class is not the message
+      const t = txt(c);
+      if (t && t.length <= 300 && vis(c)) return t;
+    }
+  }
+  return '';
+}
+"""
+
+# A trimmed snippet of the field's wrapper, for the recovery prompt's context.
+DOM_SNIPPET_JS = r"""
+(sel) => {
+  const el = document.querySelector(sel);
+  if (!el) return '';
+  const n = el.closest('.field, .form-group, .application-question, fieldset, li') || el.parentElement || el;
+  return ((n.outerHTML || '').replace(/\s+/g, ' ').trim()).slice(0, 2000);
+}
+"""
+
 
 @dataclass
 class PlannedFill:
@@ -100,6 +141,7 @@ class FillResult:
     plan: list[PlannedFill] = field(default_factory=list)
     unfilled_required: list[str] = field(default_factory=list)
     needs_human: list[str] = field(default_factory=list)
+    recoveries: list[str] = field(default_factory=list)  # AI-fixed fields: "Phone: added country code"
     screenshot_path: str | None = None
     submitted: bool = False
     paused_reason: str = ""
@@ -148,8 +190,22 @@ class AnswerSource:
     A heuristic answer is stored in the answer bank like an AI draft (`source="heuristic"`, unapproved) so the
     user can see, approve or correct it on the Answers page instead of it being repeated on every form."""
 
-    def __init__(self, session: Session, llm: LLM | None, user, job=None):
+    # Free-text "anything else / message to the team" boxes the per-application fit blurb is a good default
+    # answer for. Kept deliberately narrow: a specific free-text prompt ("Tell us about a time you disagreed
+    # with a manager", "Why would you like to relocate to Berlin?") must fall through to the tailored LLM
+    # answer, not get the generic message. So no bare "tell us about ..." and no bare "why would you like ...".
+    MESSAGE_Q = re.compile(
+        r"anything else|additional (information|info|comments?|details)|cover (note|letter)|"
+        r"why do you want to (work|join|be (a )?part)|"
+        r"tell us (anything|more)|tell us about yourself|"
+        r"(message|note) (to|for) (the )?(hiring|recruit|team|us)|is there anything|"
+        r"what (makes you|interests you|draws you)",
+        re.I,
+    )
+
+    def __init__(self, session: Session, llm: LLM | None, user, job=None, message: str = ""):
         self.session, self.llm, self.user, self.job = session, llm, user, job
+        self.message = message or ""
 
     def answer(self, question: str, options: list[str] | None = None) -> tuple[str | None, int]:
         from jobapply.ai.heuristics import heuristic_answer
@@ -165,6 +221,10 @@ class AnswerSource:
             if picked is not None:
                 return picked, banked.confidence
             # Banked free text ("B.Tech CSE") that is not one of the dropdown's options: ask again with them.
+        if self.message and not options and self.MESSAGE_Q.search(question or ""):
+            # A free-text "anything else / why do you want" box: offer the tailored per-application message
+            # before falling back to the generic heuristic / LLM answer.
+            return self.message, 85
         answer, conf = heuristic_answer(question, options, self.user)
         if answer is not None:
             self._bank_heuristic(question, answer)
@@ -686,6 +746,7 @@ class FormRunner:
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(1500)
         result = FillResult(url=url or page.url, profile_origin="none")
+        self._recovery_calls = 0  # AI recovery budget is per form (per run call)
 
         spec = profile_for_url(url or "", self.profiles) or (self.profiles.get(ats_hint) if ats_hint else None)
         for step in spec.steps if spec else []:
@@ -767,9 +828,18 @@ class FormRunner:
                 try:
                     if self._retry_with_options(page, p, fields, result):
                         continue
-                except Exception as retry_exc:  # noqa: BLE001 - the answer source failed (DB, LLM bug)
+                    # A value was tried and the form rejected it (bad option, wrong format): one AI-guided fix.
+                    if p.value is not None and self._ai_recover(page, p, fields, result, p.error):
+                        continue
+                except Exception as retry_exc:  # noqa: BLE001 - the answer source / recovery failed
                     p.error = f"{p.error}; retry failed: {str(retry_exc)[:120]}"[:200]
                 log.debug("field not filled", selector=p.field.selector, error=p.error)
+                continue
+            # Filled: an inline validation error next to the field means the value was wrong. Try one AI fix.
+            err = self._field_error_safe(page, p.field)
+            if err:
+                if not self._ai_recover(page, p, fields, result, err):
+                    result.needs_human.append(f"{p.field.question[:100]}: form error {err[:80]!r}")
         done_idx = {p.field.idx for p in plan if p.done}
         choice_names_done = {p.field.name for p in plan if p.done and p.field.is_choice}
         for f in fields:
@@ -902,6 +972,78 @@ class FormRunner:
         p.done, p.error = True, ""
         if conf < self.min_answer_confidence:
             result.needs_human.append(f"{f.question[:100]}: low confidence answer, review it")
+        return True
+
+    # ------------------------------------------------------------ AI-assisted error recovery
+
+    # Most AI recovery calls one form may make. Bounds cost when a page rejects many fields.
+    AI_RECOVERY_CAP = 6
+
+    def _field_error_safe(self, page, f: FormField) -> str:
+        """The visible validation message next to this field, or "". Probed only with an LLM present, so the
+        no-AI path never touches the DOM here and behaves exactly as before."""
+        if self.llm is None or self.user is None:
+            return ""
+        try:
+            return (page.evaluate(FIELD_ERROR_JS, f.selector) or "").strip()
+        except Exception:  # noqa: BLE001 - detached node / navigation
+            return ""
+
+    def _recovery_options(self, page, f: FormField, fields: list[FormField]) -> list[str]:
+        if f.type == "select":
+            return list(f.options or [])
+        if f.is_choice:
+            return [g.label or g.value for g in fields if g.is_choice and g.name and g.name == f.name] or [
+                f.label or f.value
+            ]
+        if f.is_combobox:
+            return list(f.options) if f.options else self._combobox_options(page, f)
+        return []
+
+    def _ai_recover(self, page, p: PlannedFill, fields: list[FormField], result: FillResult,
+                    error_text: str) -> bool:
+        """One LLM-guided correction for a field that failed to fill or shows an inline error: ask
+        `ai.service.recover_field` for a corrected value/action, apply it once and re-verify. A no-op without an
+        LLM (so the no-AI behaviour is unchanged) and capped per form. Fills only; never clicks submit."""
+        if self.llm is None or self.user is None or self._recovery_calls >= self.AI_RECOVERY_CAP:
+            return False
+        self._recovery_calls += 1
+        from jobapply.ai.service import recover_field
+
+        f = p.field
+        options = self._recovery_options(page, f, fields)
+        try:
+            snippet = (page.evaluate(DOM_SNIPPET_JS, f.selector) or "").strip()
+        except Exception:  # noqa: BLE001 - detached node
+            snippet = ""
+        tried = "" if p.value is None else ("Yes" if p.value is True else "No" if p.value is False else str(p.value))
+        job = getattr(self.answers, "job", None) if self.answers is not None else None
+        try:
+            rec = recover_field(self.session, self.llm, self.user, question=f.question or p.key,
+                                value_tried=tried, field_type=f.type, options=options,
+                                error_text=error_text or "", dom_snippet=snippet, job=job)
+        except LLMError as exc:
+            log.warning("field recovery failed", selector=f.selector, error=str(exc)[:120])
+            return False
+        if rec.action == "skip" or not rec.value:
+            log.debug("recovery suggested skip", selector=f.selector, reason=rec.reason[:120])
+            return False
+        prev = p.value
+        p.value = rec.value
+        try:
+            self._fill_one(page, p, fields, result)
+        except Exception as exc:  # noqa: BLE001 - the corrected value still would not fill
+            p.value = prev
+            p.error = f"recovery value rejected: {str(exc)[:120]}"[:200]
+            return False
+        err = self._field_error_safe(page, f)
+        if err:
+            p.error = f"recovery still invalid: {err[:120]}"[:200]
+            return False
+        p.done, p.error, p.source = True, "", "ai"
+        note = (rec.reason or f"set to {rec.value}")[:120]
+        result.recoveries.append(f"{(f.question[:60] or f.selector)}: {note}")
+        log.info("ai recovered field", selector=f.selector, action=rec.action, note=note)
         return True
 
     @staticmethod

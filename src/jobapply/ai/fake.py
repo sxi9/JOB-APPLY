@@ -12,8 +12,14 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from jobapply.ai.base import LLM, AnswerResult, LLMRequest, LLMResult, ResumeVariant, ScoreResult
-from jobapply.ai.heuristics import TECH, cover_letter_template, heuristic_answer, score_job_heuristic  # noqa: F401
+from jobapply.ai.base import LLM, AnswerResult, LLMRequest, LLMResult, RecoverResult, ResumeVariant, ScoreResult
+from jobapply.ai.heuristics import (  # noqa: F401
+    TECH,
+    application_message_template,
+    cover_letter_template,
+    heuristic_answer,
+    score_job_heuristic,
+)
 
 
 def _words(text: str) -> set[str]:
@@ -60,6 +66,24 @@ class FakeLLM(LLM):
 
     def _cover_letter(self, ctx: dict) -> str:
         return cover_letter_template(ctx.get("profile", {}), ctx["job"], ctx.get("tone", "professional"))
+
+    def _application_message(self, ctx: dict) -> str:
+        return application_message_template(ctx.get("profile", {}), ctx["job"], ctx.get("tone", "professional"))
+
+    def _recover_field(self, ctx: dict) -> RecoverResult:
+        """Deterministic fix: pick a matching option when options are given, otherwise reformat a phone-like
+        value by prefixing the profile's country dial hint. Tests usually queue a canned RecoverResult."""
+        options = ctx.get("options") or []
+        value = str(ctx.get("value") or "")
+        if options:
+            from jobapply.ai.heuristics import _pick_option
+
+            pick = _pick_option(options, value) or options[0]
+            return RecoverResult(action="pick_option", value=pick, reason="chose a listed option")
+        digits = re.sub(r"\D", "", value)
+        if digits and not value.strip().startswith("+"):
+            return RecoverResult(action="reformat", value="+" + digits, reason="added country code")
+        return RecoverResult(action="skip", value="", reason="no safe correction")
 
     def _resume(self, ctx: dict) -> ResumeVariant:
         master, job = ctx["resume"], ctx["job"]

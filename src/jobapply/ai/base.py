@@ -102,3 +102,11 @@ class ResumeVariant(BaseModel):
 class AnswerResult(BaseModel):
     answer: str
     confidence: int  # 0-100, how well the vault supports this answer
+
+
+class RecoverResult(BaseModel):
+    """One LLM-guided fix for a form field the filler could not complete."""
+
+    action: str  # retype | pick_option | reformat | skip
+    value: str = ""
+    reason: str = ""  # short phrase for the reviewer, e.g. "added country code"

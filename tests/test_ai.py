@@ -202,7 +202,9 @@ def test_prepare_application_is_idempotent(session, demo):
     llm = FakeLLM()
     prepare_application(session, llm, demo, app, job)
     prepare_application(session, llm, demo, app, job)
-    assert len(llm.calls) == 2  # cover letter + resume, once
+    assert len(llm.calls) == 3  # cover letter + resume + application message, once each
+    assert app.message  # the per-application note was populated and reused (not regenerated)
+    assert {c.task for c in llm.calls} == {"cover_letter", "resume", "application_message"}
 
 
 def test_get_llm_fake_backend(session, demo):

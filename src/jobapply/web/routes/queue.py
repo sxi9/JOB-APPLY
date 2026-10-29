@@ -29,6 +29,8 @@ async def queue_decide(app_id: int, request: Request, ctx: Ctx = Depends(get_ctx
         app.answers = {**(app.answers or {}), **answers}
     if "cover_letter" in form:
         app.cover_letter = str(form["cover_letter"])
+    if "message" in form:
+        app.message = str(form["message"])
     app.updated_at = utcnow()
     decision = form.get("decision")
     if decision == "approve":

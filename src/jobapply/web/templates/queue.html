@@ -13,18 +13,24 @@
   </div>
   {% if app.error %}<div class="flash flash-error" style="margin-top:10px">{{ app.error }}</div>{% endif %}
   {% if app.score_reason %}<p class="small">{{ app.score_reason }}</p>{% endif %}
+  {% set recoveries = (app.answers or {}).get("__ai_recoveries__") %}
+  {% if recoveries %}<div class="flash flash-ok small" style="margin-top:10px"><strong>AI fixed during fill:</strong>
+    <ul style="margin:6px 0 0 0">{% for r in recoveries %}<li>{{ r }}</li>{% endfor %}</ul></div>{% endif %}
   <form hx-post="/queue/{{ app.id }}" hx-target="#q-{{ app.id }}" hx-swap="outerHTML">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <div class="grid grid-2">
       <div>
         <h3>Answers to be filled</h3>
-        {% for label, value in (app.answers or {}).items() %}
+        {% for label, value in (app.answers or {}).items() if not label.startswith("__") %}
         <div class="qa"><label>{{ label }}</label><input type="text" name="answer__{{ label }}" value="{{ value }}"></div>
         {% else %}<p class="muted small">No form answers yet. They appear after a dry run.</p>{% endfor %}
         {% if app.screenshot_path %}<details><summary>Dry-run screenshot</summary>
           <img class="screenshot" loading="lazy" src="/files/screenshot/{{ app.id }}" alt="dry run screenshot"></details>{% endif %}
       </div>
-      <div><h3>Cover letter</h3><textarea name="cover_letter" rows="10">{{ app.cover_letter }}</textarea></div>
+      <div><h3>Cover letter</h3><textarea name="cover_letter" rows="7">{{ app.cover_letter }}</textarea>
+        <h3 style="margin-top:12px">Application message</h3>
+        <p class="muted small">The note sent in the form's "anything else / message to the team" box. Edit before approving.</p>
+        <textarea name="message" rows="5">{{ app.message or "" }}</textarea></div>
     </div>
     <div class="row" style="margin-top:12px">
       <button class="btn btn-primary" name="decision" value="approve">Approve</button>

@@ -367,3 +367,45 @@ def test_vault_view_for_falls_back_to_uploaded_resume(session, demo):
     assert v.resume_path == "/up/a.pdf" and v.cover_letter == "x"
     app.resume_variant = "/var/v.pdf"
     assert vault_view_for(demo, app).resume_path == "/var/v.pdf"
+
+
+# ------------------------------------------------------------------ AI error recovery
+
+_RECOVERY_FORM = """<form>
+  <label for="em">Email *</label><input id="em" name="email" type="email" required>
+  <label for="nm">Full name *</label><input id="nm" name="name" type="text" required>
+  <label for="ph">Phone *</label><input id="ph" name="phone" type="tel" required>
+  <span id="pherr" class="error" style="display:none">Add a country code</span>
+  <script>
+    document.getElementById('ph').addEventListener('input', function () {
+      var e = document.getElementById('pherr');
+      e.style.display = (this.value && this.value.trim()[0] !== '+') ? 'block' : 'none';
+    });
+  </script></form>"""
+
+
+def test_runner_records_ai_recovery(page, session, demo, resume):
+    # The phone in the vault has no country code; the form flags it inline. With an LLM the runner asks for a
+    # corrected value, re-fills and records the fix.
+    profile = {**DEMO_PROFILE, "phone": "9876543210"}
+    v = VaultView(profile=profile, resume_path=str(resume), cover_letter="CL")
+    llm = FakeLLM()
+    runner = FormRunner(session, v, answers=AnswerSource(session, llm, demo), llm=llm, user=demo,
+                        profiles_dir=PROFILES)
+    result = runner.run(page, url="https://recover.example.com/apply", html=_RECOVERY_FORM)
+    assert result.recoveries, result.summary()
+    assert any("Phone" in r for r in result.recoveries)
+    assert page.locator("#ph").input_value().startswith("+")
+    assert not any("form error" in h for h in result.needs_human)
+
+
+def test_runner_no_recovery_without_llm(page, session, demo, resume):
+    # Same inline error, no LLM: the error is not probed and nothing is recovered (unchanged behaviour).
+    demo.profile = {**demo.profile, "phone": "9876543210"}
+    v = VaultView(profile=demo.profile, resume_path=str(resume), cover_letter="CL")
+    runner = FormRunner(session, v, answers=AnswerSource(session, None, demo), llm=None, user=demo,
+                        profiles_dir=PROFILES)
+    result = runner.run(page, url="https://recover.example.com/apply", html=_RECOVERY_FORM)
+    assert result.recoveries == []
+    assert not any("form error" in h for h in result.needs_human)
+    assert page.locator("#ph").input_value() == "9876543210"

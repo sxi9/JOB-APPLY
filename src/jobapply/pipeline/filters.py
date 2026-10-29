@@ -6,12 +6,13 @@ import re
 from datetime import datetime, timedelta
 from math import ceil
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer, model_validator
 from sqlmodel import Session, select
 
 from jobapply.logs import get_logger
 from jobapply.models import Application, ApplicationEvent, Job, User, utcnow
 from jobapply.pipeline.dedupe import norm_company
+from jobapply.roles import match_title, titles_for
 
 log = get_logger(__name__)
 
@@ -76,6 +77,36 @@ class UserFilters(BaseModel):
     # Minute-level recency. When set it overrides max_age_hours (kept for back-compat). Applied to the
     # minute only for exact-timestamp sources; coarse sources fall back to whole-hour granularity.
     max_age_minutes: int | None = None
+    # Role-taxonomy picker: field keys ("cybersecurity"), whole-field keys ("cybersecurity:*") and/or
+    # sub-role keys ("cybersecurity:soc"). Expanded via roles.titles_for() to title keywords that gate
+    # matching in `match()` and are folded into keywords_include on serialisation so the heuristic scorer
+    # (which reads the stored filters dict, not this model) treats them as role/title keywords too.
+    role_selection: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _restore_raw_keywords(cls, data):
+        # The dumped dict folds the role expansion into `keywords_include` for the scorer but keeps the
+        # user's own free-text under `keywords_include_text`; restore that here so round-trips stay stable
+        # (the free-text box never fills up with expanded synonyms).
+        if isinstance(data, dict) and "keywords_include_text" in data:
+            data = dict(data)
+            data["keywords_include"] = data.pop("keywords_include_text")
+        return data
+
+    @model_serializer(mode="wrap")
+    def _fold_role_selection(self, handler):
+        data = handler(self)
+        if self.role_selection:
+            expansion = titles_for(self.role_selection)
+            if expansion:
+                data["keywords_include_text"] = list(self.keywords_include)
+                merged = list(self.keywords_include)
+                for keyword in sorted(expansion):
+                    if keyword not in merged:
+                        merged.append(keyword)
+                data["keywords_include"] = merged
+        return data
 
 
 def _contains(haystack: str, needle: str) -> bool:
@@ -98,8 +129,13 @@ def match(job: Job, f: UserFilters, now=None) -> tuple[bool, str]:
     company = norm_company(job.company)
     if any(b and norm_company(b) and norm_company(b) in company for b in f.company_blocklist):
         return False, "company blocklisted"
-    if f.roles and not any(all(_contains(title, w) for w in role.lower().split()) for role in f.roles):
-        return False, "role not matched"
+    if f.roles or f.role_selection:
+        free_ok = bool(f.roles) and any(
+            all(_contains(title, w) for w in role.lower().split()) for role in f.roles
+        )
+        tax_ok = bool(f.role_selection) and match_title(job.title, f.role_selection)
+        if not (free_ok or tax_ok):
+            return False, "role not matched"
     if f.keywords_include and not any(_contains(text, k) for k in f.keywords_include):
         return False, "no include keyword"
     if any(_contains(title, k) for k in f.keywords_exclude):

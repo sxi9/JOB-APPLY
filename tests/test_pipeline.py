@@ -555,3 +555,51 @@ def test_external_linkedin_skips_when_session_expired(session, demo, monkeypatch
     out = apply_external_linkedin_user(None, session, demo, limit=5, dry_run=True)
     assert out == [] and runner_calls == []
     assert notified and notified[-1][0] == "paused" and "login" in notified[-1][1]
+
+
+# ------------------------------------------------------------------ role taxonomy integration
+
+
+def test_role_selection_gates_matching_like_roles():
+    from jobapply.ai.heuristics import score_job_heuristic
+
+    cyber = _job(title="Cyber Threat Intelligence Analyst", description="SIEM, threat intel, SOC work")
+    frontend = _job(title="Frontend Engineer", description="React and CSS")
+
+    f = UserFilters(role_selection=["cybersecurity:*"])
+    assert match(cyber, f)[0]
+    assert match(frontend, f)[1] == "role not matched"
+
+    # A narrow sub-role selection only matches its own titles.
+    f2 = UserFilters(role_selection=["cybersecurity:pentest"])
+    assert match(_job(title="Senior Penetration Tester", description="x"), f2)[0]
+    assert match(cyber, f2)[1] == "role not matched"
+
+    # Free-text roles keep working alongside a taxonomy selection (either may satisfy the gate).
+    f3 = UserFilters(roles=["frontend engineer"], role_selection=["cybersecurity:soc"])
+    assert match(frontend, f3)[0]
+    assert match(_job(title="SOC Analyst", description="x"), f3)[0]
+
+    # The expansion is folded into keywords_include on serialisation, so the heuristic scorer (which reads
+    # the stored dict) treats the synonyms as title/keyword hits.
+    profile = {"skills": {"python": 3}}
+    stored = UserFilters(role_selection=["cybersecurity:*"]).model_dump()
+    assert "threat intelligence" in stored["keywords_include"]
+    with_sel = score_job_heuristic(profile, stored, cyber).score
+    without = score_job_heuristic(profile, UserFilters().model_dump(), cyber).score
+    assert with_sel > without
+
+
+def test_assign_jobs_matches_cyber_user_by_role_selection(session):
+    sel = UserFilters(role_selection=["cybersecurity:*"]).model_dump()
+    cat = User(username="cat", password_hash="x", filters=sel)
+    session.add(cat)
+    session.commit()
+    ids = store_jobs(session, [
+        nj(title="Security Operations Center Analyst", source_id="soc1", description="SOC monitoring"),
+        nj(title="Frontend Engineer", source_id="fe1", description="React and CSS"),
+    ])
+    assert assign_jobs(session, ids)["cat"] == 1
+    got = [session.get(Job, a.job_id).title
+           for a in session.exec(select(Application).where(Application.user_id == cat.id)).all()]
+    assert got == ["Security Operations Center Analyst"]

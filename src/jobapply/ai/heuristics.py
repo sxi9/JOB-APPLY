@@ -434,3 +434,28 @@ def cover_letter_template(user: User | dict | None, job: Job | dict, tone: str =
         f"services end to end.\n\nI am available with a notice period of {p.get('notice_period', 'one month')} "
         f"and happy to talk whenever suits you.\n\nBest regards,\n{name}"
     ).replace("role. \n\n", "role.\n\n")
+
+
+def application_message_template(user: User | dict | None, job: Job | dict, tone: str = "professional") -> str:
+    """A short, specific note (2-4 sentences) for the free-text "anything else / message to the hiring team"
+    box, built only from profile facts and this posting. Used when there is no LLM, and as the fallback when
+    the LLM draft fails. No greeting or sign-off: it goes inside a form field, not an email."""
+    p, j = _profile_of(user), _job_of(job)
+    skills = _skill_labels(p)
+    top = ", ".join(s.title() if s.islower() else s for s in skills[:3]) or "the stack this role uses"
+    years = p.get("years_experience")
+    exp = f"{years} years of" if years else "hands-on"
+    role = (j.get("title") or "this role").strip()
+    company = (j.get("company") or "your team").strip()
+    sentences = [
+        f"I am keen on the {role} role at {company} and believe I am a strong fit.",
+        f"I bring {exp} experience with {top}, which maps directly onto what the posting asks for.",
+    ]
+    summary = (p.get("summary") or "").strip()
+    if summary:
+        first = re.split(r"(?<=[.!?])\s+", summary)[0].strip()
+        sentences.append(first if first.endswith((".", "!", "?")) else first + ".")
+    notice = p.get("notice_period")
+    if notice:
+        sentences.append(f"I can start within {notice} and would welcome the chance to discuss the role.")
+    return " ".join(sentences[:4])

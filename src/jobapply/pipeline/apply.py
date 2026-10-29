@@ -104,7 +104,13 @@ def record_outcome(
         scope.set_status(app, AppStatus.failed, app.error)
         return ApplyOutcome(app.id, AppStatus.failed, app.error)
 
-    app.answers = {**(app.answers or {}), **result.answers}
+    answers = {**(app.answers or {}), **result.answers}
+    # AI recovery notes ride along in the answers JSON under a reserved key the Queue page renders separately,
+    # so no extra column is needed; replace last run's so stale notes do not linger.
+    answers.pop("__ai_recoveries__", None)
+    if result.recoveries:
+        answers["__ai_recoveries__"] = result.recoveries
+    app.answers = answers
     app.screenshot_path = result.screenshot_path
     app.error = None
     detail = result.summary()
@@ -138,7 +144,8 @@ def run_one(
 ) -> ApplyOutcome:
     s = get_settings()
     vault = vault_view_for(user, app)
-    runner = FormRunner(session, vault, answers=AnswerSource(session, llm, user, job), llm=llm, user=user)
+    answers = AnswerSource(session, llm, user, job, message=app.message or "")
+    runner = FormRunner(session, vault, answers=answers, llm=llm, user=user)
     shot = s.screenshots_dir / str(user.id) / f"{app.id}-{utcnow().strftime('%Y%m%d%H%M%S')}.png"
     submit = (
         not dry_run
@@ -315,7 +322,8 @@ def _run_resolved_external(
     retried."""
     s = get_settings()
     vault = vault_view_for(user, app)
-    runner = FormRunner(session, vault, answers=AnswerSource(session, llm, user, job), llm=llm, user=user)
+    answers = AnswerSource(session, llm, user, job, message=app.message or "")
+    runner = FormRunner(session, vault, answers=answers, llm=llm, user=user)
     shot = s.screenshots_dir / str(user.id) / f"{app.id}-{utcnow().strftime('%Y%m%d%H%M%S')}.png"
     # A real submit needs the resolved site enabled AND auto-submit on, mirroring pick_applications, which
     # skips sites where `not site.enabled`: disabling a site must stop real submits through this path too.

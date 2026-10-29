@@ -57,6 +57,44 @@ Answer bank (question -> approved answer):
 """
 
 
+RECOVER_SYSTEM = """You fix a single job-application form field that an automated filler could not complete.
+You get the field's question, its type, the value that was tried, the available options (if any), the error
+the form showed and a snippet of the surrounding page. Decide the action and return a corrected value:
+- retype: the same kind of value, corrected (a typo, wrong casing, extra spaces)
+- reformat: the right data in the format the field wants (add a country code, change a date format)
+- pick_option: choose exactly one of the given options, verbatim (only when options are given)
+- skip: no safe value exists; leave the field for a human (use an empty value)
+Use only facts from the candidate profile below; never invent data, and never guess a legal attestation the
+profile cannot back. Keep `reason` to a short phrase such as "added country code". Put the value to fill in
+`value` (empty for skip).
+
+Candidate profile:
+{profile}
+"""
+
+APP_MESSAGE_SYSTEM = """You write a short, specific note for the free-text "anything else / additional
+information / message to the hiring team" box on a job application, for an automated job application assistant.
+Tone: {tone}. Two to four sentences. No greeting, no sign-off, no headers, no placeholders, no bullet points.
+Say concretely why this candidate fits THIS {company} role, grounded in the candidate profile: name a real
+overlap between the profile and the posting. Only use facts from the candidate profile below.
+
+Candidate profile:
+{profile}
+"""
+
+
+def recover_prompt(question: str, value_tried: str, field_type: str, options: list[str] | None,
+                   error_text: str, dom_snippet: str) -> str:
+    lines = [f"Question: {question}", f"Field type: {field_type}", f"Value tried: {value_tried!r}"]
+    if options:
+        lines.append("Options (pick exactly one verbatim): " + " | ".join(options[:60]))
+    if error_text:
+        lines.append(f"Form error shown: {error_text}")
+    if dom_snippet:
+        lines.append("Surrounding DOM:\n" + dom_snippet[:1500])
+    return "\n".join(lines)
+
+
 def profile_text(user: User) -> str:
     p = dict(user.profile or {})
     p.pop("resume_json", None)

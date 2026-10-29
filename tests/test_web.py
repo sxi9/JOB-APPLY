@@ -135,7 +135,8 @@ def test_queue_approve_with_edits(client, engine):
         app = s.exec(select(Application).where(Application.status == AppStatus.queued)).first()
     resp = client.post(
         f"/queue/{app.id}",
-        data={"csrf": csrf, "decision": "approve", "cover_letter": "Edited letter", "answer__Notice period": "15 days"},
+        data={"csrf": csrf, "decision": "approve", "cover_letter": "Edited letter",
+              "message": "I fit this role because of X.", "answer__Notice period": "15 days"},
         headers={"HX-Request": "true"},
     )
     assert resp.status_code == 200 and "approved" in resp.text
@@ -143,6 +144,22 @@ def test_queue_approve_with_edits(client, engine):
         app = s.get(Application, app.id)
         assert app.status == AppStatus.approved and app.cover_letter == "Edited letter"
         assert app.answers["Notice period"] == "15 days"
+        assert app.message == "I fit this role because of X."
+
+
+def test_queue_shows_message_and_recovery_notes(client, engine):
+    _, csrf = login(client, "demo", "demo1234")
+    with Session(engine) as s:
+        app = s.exec(select(Application).where(Application.status == AppStatus.queued)).first()
+        app.message = "A tailored note for this team."
+        app.answers = {**(app.answers or {}), "__ai_recoveries__": ["Phone: added country code"]}
+        s.add(app)
+        s.commit()
+    page = client.get("/queue").text
+    assert "A tailored note for this team." in page
+    assert "AI fixed during fill" in page and "added country code" in page
+    assert 'name="message"' in page
+    assert "__ai_recoveries__" not in page  # the reserved key is not rendered as an answer input
 
 
 def test_other_users_rows_are_invisible(client, engine):
@@ -450,3 +467,40 @@ def test_settings_saves_max_age_minutes(client, engine):
     with Session(engine) as s:
         demo = s.exec(select(User).where(User.username == "demo")).one()
         assert demo.filters["max_age_minutes"] is None and demo.filters["max_age_hours"] == 48
+
+
+def test_settings_saves_role_selection(client, engine):
+    _, csrf = login(client, "demo", "demo1234")
+    # The picker renders fields and sub-roles.
+    page = client.get("/settings").text
+    assert "Any Cybersecurity role" in page and "SOC analyst" in page
+    resp = client.post(
+        "/settings/filters",
+        data={
+            "csrf": csrf,
+            "roles": "backend engineer",
+            "keywords_include": "python",
+            "role_selection": ["cybersecurity:*", "software_engineering:backend"],
+        },
+    )
+    assert resp.status_code == 303
+    with Session(engine) as s:
+        demo = s.exec(select(User).where(User.username == "demo")).one()
+        assert set(demo.filters["role_selection"]) == {"cybersecurity:*", "software_engineering:backend"}
+        # Free text is preserved; the expansion is folded into keywords_include for the scorer.
+        assert "threat intelligence" in demo.filters["keywords_include"]
+        assert demo.filters["keywords_include_text"] == ["python"]
+        assert demo.filters["roles"] == ["backend engineer"]
+    # Round-trip: the free-text box shows only the user's own keyword, not the expanded synonyms, and the
+    # saved checkboxes come back checked.
+    page = client.get("/settings").text
+    assert 'value="cybersecurity:*" checked' in page
+    # A single selected checkbox (string, not list) also persists.
+    resp = client.post(
+        "/settings/filters",
+        data={"csrf": csrf, "role_selection": "cybersecurity:soc"},
+    )
+    assert resp.status_code == 303
+    with Session(engine) as s:
+        demo = s.exec(select(User).where(User.username == "demo")).one()
+        assert demo.filters["role_selection"] == ["cybersecurity:soc"]

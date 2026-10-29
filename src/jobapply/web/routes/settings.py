@@ -8,6 +8,7 @@ from jobapply.ai.service import user_keys
 from jobapply.config import get_settings
 from jobapply.models import Credential, UserSite, utcnow
 from jobapply.pipeline.filters import SENIORITY_ORDER, UserFilters
+from jobapply.roles import all_fields
 from jobapply.vault import Vault, VaultError, mask
 from jobapply.web.deps import Ctx, as_list, flash, get_ctx, read_form, split_lines
 from jobapply.web.routes.jobs import AGE_PRESETS
@@ -46,9 +47,12 @@ def settings_page(ctx: Ctx = Depends(get_ctx)):
             }
         )
     providers.sort(key=lambda p: (p["position"], p["spec"].name))
+    filters = UserFilters.model_validate(ctx.view.filters or {})
     return ctx.render(
         "settings.html",
-        filters=UserFilters.model_validate(ctx.view.filters or {}),
+        filters=filters,
+        role_fields=all_fields(),
+        role_selected=set(filters.role_selection),
         prefs=prefs,
         sites=ctx.scope.sites(),
         creds=[c for c in creds if c.kind != "api_key"],
@@ -77,6 +81,7 @@ async def save_filters(request: Request, ctx: Ctx = Depends(get_ctx)):
         company_blocklist=split_lines(form.get("company_blocklist")),
         max_age_hours=int(form.get("max_age_hours") or 72),
         max_age_minutes=int(form["max_age_minutes"]) if form.get("max_age_minutes") else None,
+        role_selection=as_list(form.get("role_selection")),
     )
     ctx.view.filters = f.model_dump()
     ctx.session.add(ctx.view)

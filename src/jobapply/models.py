@@ -181,6 +181,7 @@ class Application(SQLModel, table=True):
     missing_skills: list = _json(list)
     resume_variant: str | None = None  # path to the tailored PDF
     cover_letter: str = Field(default="", sa_column=Column(Text, nullable=False, default=""))
+    message: str | None = Field(default=None, sa_column=Column(Text, nullable=True))  # per-application note
     answers: dict = _json()  # field label -> value actually filled
     screenshot_path: str | None = None
     error: str | None = None
