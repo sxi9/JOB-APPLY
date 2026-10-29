@@ -4,7 +4,9 @@
     <div class="muted small">{{ job.company }}{% if job.remote %} · <span class="badge">remote</span>{% endif %}
       {% set pay = job.salary_min | money(job.salary_max, job.currency) %}{% if pay %} · {{ pay }}{% endif %}</div></td>
   <td class="hide-sm small">{{ job.location or "—" }}</td>
-  <td class="small" title="{{ job.posted_at | dt }}">{{ (job.posted_at or job.first_seen_at) | ago }}</td>
+  {% set when = job.posted_at or job.first_seen_at %}
+  <td class="small" title="{{ job.posted_at | dt }}">{{ rel_age(when) }}{% if is_fresh(when) %}
+    <span class="badge" style="background:#1f7a3d;color:#fff">fresh</span>{% endif %}</td>
   <td class="hide-sm"><span class="badge">{{ job.source }}</span></td>
   <td><span class="score {{ (app.score if app else None) | score_class }}">{{ app.score if app and app.score is not none else "–" }}</span></td>
   <td>{% if app %}<span class="chip chip-{{ app.status | status_color }}">{{ app.status | label }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>

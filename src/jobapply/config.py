@@ -89,6 +89,9 @@ class Settings(BaseSettings):
     http_timeout: float = 20.0
     user_agent: str = "jobapply/0.1 (+https://github.com/sxi9/JOB-APPLY)"
     collect_interval_minutes: int = 45
+    # Hot-polling tier: a second collect task over the fast exact-timestamp sources only
+    # (ATS APIs for the hot company list + LinkedIn guest), for minute-level recency.
+    hot_interval_minutes: int = 5
 
     # Notifier
     whatsapp_base_url: str | None = None

@@ -10,10 +10,10 @@
 <form class="card filters" hx-get="/jobs" hx-target="#job-rows" hx-push-url="true" hx-trigger="change, submit, keyup changed delay:400ms from:input[type=search]">
   <input type="hidden" name="scope" value="{{ params.get('scope', 'mine') }}">
   <div><label>Search</label><input type="search" name="q" value="{{ params.get('q', '') }}" placeholder="title or text"></div>
-  <div><label>Posted within</label><select name="hours">
+  <div><label>Posted within</label><select name="within">
     <option value="">any time</option>
-    {% for h, t in [(6, "6 hours"), (24, "24 hours"), (48, "48 hours"), (72, "3 days"), (168, "7 days")] %}
-    <option value="{{ h }}" {{ 'selected' if params.get('hours') == h|string }}>{{ t }}</option>{% endfor %}
+    {% for m, t in age_presets %}
+    <option value="{{ m }}" {{ 'selected' if params.get('within') == m|string }}>{{ t }}</option>{% endfor %}
   </select></div>
   <div><label>Source</label><select name="source"><option value="">all</option>
     {% for s in sources %}<option {{ 'selected' if params.get('source') == s }}>{{ s }}</option>{% endfor %}</select></div>

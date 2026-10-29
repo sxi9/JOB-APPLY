@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
+from math import ceil
 
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
@@ -33,6 +34,34 @@ def detect_seniority(title: str) -> str | None:
     return None
 
 
+# Sources whose posted_at is an exact timestamp we can trust to the minute. ATS company APIs and the
+# LinkedIn guest search return a precise posting time; aggregators (indeed, feeds, jobspy, adzuna, …)
+# often give a coarse "x days ago", so a sub-hour (minutes) filter must not be applied to them precisely.
+EXACT_TIMESTAMP_SOURCES = frozenset(
+    {"greenhouse", "lever", "ashby", "workable", "smartrecruiters", "linkedin"}
+)
+
+
+def has_exact_timestamp(source: str | None) -> bool:
+    return (source or "") in EXACT_TIMESTAMP_SOURCES
+
+
+def age_cutoff(f: UserFilters, now: datetime, exact: bool):
+    """Oldest allowed posting time for this filter, or None when no age limit applies.
+
+    `max_age_minutes` wins over `max_age_hours` when set. A minutes window is applied to the minute only
+    for exact-timestamp sources; for coarse-timestamp sources it is widened to whole-hour granularity
+    (rounding the window up, at least one hour) so a minutes filter never hides a coarse job wrongly.
+    """
+    if f.max_age_minutes is not None:
+        if exact:
+            return now - timedelta(minutes=f.max_age_minutes)
+        return now - timedelta(hours=max(1, ceil(f.max_age_minutes / 60)))
+    if f.max_age_hours:
+        return now - timedelta(hours=f.max_age_hours)
+    return None
+
+
 class UserFilters(BaseModel):
     keywords_include: list[str] = Field(default_factory=list)  # any must appear in title or description
     keywords_exclude: list[str] = Field(default_factory=list)  # none may appear in the title
@@ -44,6 +73,9 @@ class UserFilters(BaseModel):
     company_blocklist: list[str] = Field(default_factory=list)
     sources: list[str] = Field(default_factory=list)  # empty means all
     max_age_hours: int = 72
+    # Minute-level recency. When set it overrides max_age_hours (kept for back-compat). Applied to the
+    # minute only for exact-timestamp sources; coarse sources fall back to whole-hour granularity.
+    max_age_minutes: int | None = None
 
 
 def _contains(haystack: str, needle: str) -> bool:
@@ -58,7 +90,8 @@ def match(job: Job, f: UserFilters, now=None) -> tuple[bool, str]:
     location = (job.location or "").lower()
 
     when = job.posted_at or job.first_seen_at
-    if when and f.max_age_hours and when < now - timedelta(hours=f.max_age_hours):
+    cutoff = age_cutoff(f, now, has_exact_timestamp(job.source))
+    if when and cutoff and when < cutoff:
         return False, "too old"
     if f.sources and job.source not in f.sources:
         return False, "source not selected"
@@ -107,6 +140,11 @@ def assign_jobs(session: Session, job_ids: list[int] | None = None, users: list[
                 counts[user.username] = 0
                 continue
             stmt = stmt.where(Job.id.in_(job_ids))
+        elif f.max_age_minutes is not None:
+            # Generous candidate window (match() does the precise, per-source check). The widest match
+            # window is the coarse whole-hour one; double it so no candidate is missed.
+            buffer_hours = max(1, ceil(f.max_age_minutes / 60)) * 2
+            stmt = stmt.where(Job.first_seen_at >= utcnow() - timedelta(hours=buffer_hours))
         elif f.max_age_hours:
             stmt = stmt.where(Job.first_seen_at >= utcnow() - timedelta(hours=f.max_age_hours * 2))
         existing = set(session.exec(select(Application.job_id).where(Application.user_id == user.id)).all())

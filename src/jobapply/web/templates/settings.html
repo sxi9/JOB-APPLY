@@ -15,6 +15,10 @@
     <div>
       <div class="field"><label>Salary floor (posted maximum must reach this)</label><input type="number" name="salary_floor" value="{{ filters.salary_floor or '' }}"></div>
       <div class="field"><label>Posted within (hours)</label><input type="number" name="max_age_hours" min="1" value="{{ filters.max_age_hours }}"></div>
+      <div class="field"><label>Posted within (preset, overrides hours when set)</label><select name="max_age_minutes">
+        <option value="">use hours above</option>
+        {% for m, t in age_presets %}<option value="{{ m }}" {{ 'selected' if filters.max_age_minutes == m }}>{{ t }}</option>{% endfor %}
+      </select></div>
       <label class="check"><input type="checkbox" name="remote_only" value="1" {{ 'checked' if filters.remote_only }}> Remote only</label>
     </div>
   </div>

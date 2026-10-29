@@ -9,6 +9,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from jobapply.config import get_settings
 from jobapply.db import session_scope
 from jobapply.logs import get_logger
 from jobapply.switches import collect_interval
@@ -20,6 +21,19 @@ def task_collect() -> None:
     from jobapply.pipeline.collect import run_all
 
     log.info("scheduled collect", **run_all())
+
+
+def task_collect_hot() -> None:
+    """Hot-polling tier: only the fast exact-timestamp sources (hot ATS companies + LinkedIn guest),
+    for minute-level recency. Idempotent — dedupe handles jobs already seen by the normal collect task."""
+    from jobapply.collectors.registry import hot_collectors
+    from jobapply.pipeline.collect import run_all, user_queries
+
+    collectors = hot_collectors(extra_queries=user_queries())
+    if not collectors:
+        log.info("scheduled collect_hot skipped", reason="no hot sources configured")
+        return
+    log.info("scheduled collect_hot", **run_all(collectors=collectors))
 
 
 def task_score() -> None:
@@ -70,8 +84,13 @@ def _collect_trigger() -> IntervalTrigger:
         return IntervalTrigger(minutes=collect_interval(session), jitter=120)
 
 
+def _hot_trigger() -> IntervalTrigger:
+    return IntervalTrigger(minutes=get_settings().hot_interval_minutes, jitter=30)
+
+
 TASKS: list[Task] = [
     Task("collect", task_collect, _collect_trigger, "collector"),
+    Task("collect_hot", task_collect_hot, _hot_trigger, "collector"),
     Task("score", task_score, _every(15), "worker"),
     Task("apply", task_apply, _every(30), "worker"),
     Task("inbox", task_inbox, _every(10), "worker"),

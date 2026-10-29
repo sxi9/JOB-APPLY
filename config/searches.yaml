@@ -24,3 +24,12 @@ linkedin:
   max_requests: 60         # search + posting requests per run, over all queries; the run stops politely there
 # A 429/999 or an authwall redirect records app_settings.linkedin_guest_cooldown_until (2 h, doubling on
 # repeats); the guest collector also stays off while any user's LinkedIn challenge cooldown is active.
+# Hot-polling tier: a second collect task (JOBAPPLY_HOT_INTERVAL_MINUTES, default 5) that runs ONLY the
+# fast exact-timestamp sources for minute-level recency. `companies` lists company names (as in
+# companies.yaml) whose ATS API should be polled hot; set `linkedin: true` to include the guest search,
+# optionally with a tighter `linkedin_minutes_old`. A company may instead carry `hot: true` in
+# companies.yaml. Leave empty to run no hot tier. The normal collect task is unchanged.
+hot:
+  companies: []
+  linkedin: false
+  # linkedin_minutes_old: 15

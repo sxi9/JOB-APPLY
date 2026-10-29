@@ -45,6 +45,7 @@ class Company:
     ats: str | None = None
     slug: str | None = None
     careers_url: str | None = None
+    hot: bool = False  # polled by the hot-polling tier (see hot_collectors)
 
 
 @dataclass
@@ -57,6 +58,8 @@ class SearchConfig:
     # LinkedIn guest search: enabled, minutes_old, location, geo_id, remote_only,
     # easy_apply_only, max_results, max_details, max_requests (see config/searches.yaml).
     linkedin: dict[str, Any] = field(default_factory=dict)
+    # Hot-polling tier (see hot_collectors): {companies: [...], linkedin: true, linkedin_minutes_old: 15}.
+    hot: dict[str, Any] = field(default_factory=dict)
 
 
 _LINKEDIN_INTS = {"minutes_old": 60, "max_results": 50, "max_details": 40, "max_requests": DEFAULT_MAX_REQUESTS}
@@ -184,3 +187,54 @@ def build_collectors(
 
 def describe(collectors: list[BaseCollector]) -> list[dict[str, Any]]:
     return [{"key": c.key, "source": c.source} for c in collectors]
+
+
+# --- Hot-polling tier (additive) -------------------------------------------------------------------
+# A small, fast subset of collectors for minute-level recency: the ATS company APIs for the hot company
+# list plus the LinkedIn guest search. Driven by the `hot:` block in config/searches.yaml. Idempotent:
+# run through the same run_all / store_jobs / dedupe path as the normal collect task.
+
+
+def hot_collectors(
+    settings: Settings | None = None,
+    companies: list[Company] | None = None,
+    searches: SearchConfig | None = None,
+    extra_queries: list[str] | None = None,
+) -> list[BaseCollector]:
+    """Fast exact-timestamp collectors for the hot tier. Empty when nothing is marked hot."""
+    s = settings or get_settings()
+    companies = load_companies(s.companies_file) if companies is None else companies
+    searches = searches or load_searches(s.companies_file.with_name("searches.yaml"))
+    hot = searches.hot or {}
+    hot_names = {str(n).strip().lower() for n in (hot.get("companies") or [])}
+
+    out: list[BaseCollector] = []
+    for c in companies:
+        is_hot = c.name.strip().lower() in hot_names or bool(getattr(c, "hot", False))
+        cls = ATS_COLLECTORS.get(c.ats or "")
+        if is_hot and cls and c.slug:
+            out.append(cls(c.slug, c.name))
+
+    if hot.get("linkedin"):
+        # The hot tier shares the single guest cooldown (skip_if / on_rate_limited) with the normal tier on
+        # purpose: both poll the same guest endpoint from the same IP, so a 429/999 the hot tier triggers
+        # must also pause the normal tier (never pile onto a rate-limited IP). The trade-off is that an
+        # aggressive hot cadence (JOBAPPLY_HOT_INTERVAL_MINUTES, default 5) can get the whole LinkedIn guest
+        # search cooled down for 2h+. Keep the hot LinkedIn cadence conservative; do NOT give the hot tier
+        # its own cooldown key, which would let the normal tier hammer a just-challenged IP.
+        queries = list(dict.fromkeys([*searches.queries, *(extra_queries or [])]))
+        li = linkedin_options(searches.linkedin)
+        if queries and li:
+            minutes_old = li.pop("minutes_old")
+            override = hot.get("linkedin_minutes_old")
+            if override not in (None, ""):
+                try:
+                    minutes_old = int(override)
+                except (TypeError, ValueError):
+                    log.warning("bad hot.linkedin_minutes_old in searches.yaml, using linkedin.minutes_old",
+                                value=override)
+            out.append(LinkedInGuestCollector(
+                queries, minutes_old=minutes_old, shuffle_queries=True,
+                skip_if=_guest_cooldown_active, on_rate_limited=_record_guest_cooldown, **li,
+            ))
+    return out

@@ -10,6 +10,7 @@ from jobapply.models import Credential, UserSite, utcnow
 from jobapply.pipeline.filters import SENIORITY_ORDER, UserFilters
 from jobapply.vault import Vault, VaultError, mask
 from jobapply.web.deps import Ctx, as_list, flash, get_ctx, read_form, split_lines
+from jobapply.web.routes.jobs import AGE_PRESETS
 
 router = APIRouter()
 
@@ -53,6 +54,7 @@ def settings_page(ctx: Ctx = Depends(get_ctx)):
         creds=[c for c in creds if c.kind != "api_key"],
         mask=mask,
         seniority_levels=SENIORITY_ORDER,
+        age_presets=AGE_PRESETS,
         alert_types=ALERT_TYPES,
         tones=TONES,
         credential_kinds=CREDENTIAL_KINDS,
@@ -74,6 +76,7 @@ async def save_filters(request: Request, ctx: Ctx = Depends(get_ctx)):
         seniority=as_list(form.get("seniority")),
         company_blocklist=split_lines(form.get("company_blocklist")),
         max_age_hours=int(form.get("max_age_hours") or 72),
+        max_age_minutes=int(form["max_age_minutes"]) if form.get("max_age_minutes") else None,
     )
     ctx.view.filters = f.model_dump()
     ctx.session.add(ctx.view)

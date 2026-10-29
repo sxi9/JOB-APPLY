@@ -1,0 +1,17 @@
+<!-- Synthetic (2026-10-29): a LinkedIn job page served to a session that is no longer logged in: the apply
+     area is replaced by the contextual sign-in modal / login form and exposes no apply button and no URL.
+     parse_apply_button -> ("signin", None); the routing pauses the application for a manual apply. -->
+<section class="top-card-layout">
+  <h2 class="top-card-layout__title topcard__title">Staff Engineer</h2>
+  <div class="contextual-sign-in-modal" data-impression-id="public_jobs_contextual-sign-in-modal">
+    <form class="login__form">
+      <input id="session_key" name="session_key" type="text" autocomplete="username">
+      <input id="session_password" name="session_password" type="password">
+      <button class="sign-in-form__submit-button" type="submit">Sign in</button>
+    </form>
+    <a href="https://www.linkedin.com/signup/cold-join" class="contextual-sign-in-modal__join-link">Join now</a>
+  </div>
+</section>
+<div class="jobs-description__content">
+  <p>You will lead the platform team.</p>
+</div>

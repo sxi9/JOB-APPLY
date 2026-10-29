@@ -361,3 +361,92 @@ def test_admin_shows_one_masked_row_per_server_key(client, engine, monkeypatch):
     finally:
         providers.reset_health()
         get_settings.cache_clear()
+
+
+def test_jobs_page_fresh_badge_sort_and_minute_presets(client, engine):
+    from datetime import timedelta
+
+    from jobapply.models import utcnow
+
+    login(client, "demo", "demo1234")
+    with Session(engine) as s:
+        demo = s.exec(select(User).where(User.username == "demo")).one()
+        fresh = Job(dedupe_key="fresh-key", title="Zephyr Fresh Role", company="Acme",
+                    location="Remote", source="greenhouse", posted_at=utcnow() - timedelta(minutes=5))
+        stale = Job(dedupe_key="stale-key", title="Zephyr Stale Role", company="Acme",
+                    location="Remote", source="greenhouse", posted_at=utcnow() - timedelta(days=3))
+        s.add_all([fresh, stale])
+        s.commit()
+        s.refresh(fresh)
+        s.refresh(stale)
+        s.add_all([Application(user_id=demo.id, job_id=fresh.id),
+                   Application(user_id=demo.id, job_id=stale.id)])
+        s.commit()
+
+    page = client.get("/jobs").text
+    # New minute-level presets are offered.
+    assert "10 min" in page and "30 min" in page and "1 hour" in page
+    # The fresh job shows the badge and a minute-level relative age; default sort is newest first.
+    assert "fresh" in page and "min ago" in page
+    assert page.index("Zephyr Fresh Role") < page.index("Zephyr Stale Role")
+
+    # A 10-minute "posted within" filter keeps the 5-min job and drops the 3-day-old one.
+    within = client.get("/jobs?within=10").text
+    assert "Zephyr Fresh Role" in within and "Zephyr Stale Role" not in within
+
+
+def test_jobs_within_filter_keeps_coarse_aggregator_jobs(client, engine):
+    """The live /jobs?within= filter must not hide coarse-timestamp aggregator jobs (indeed, feeds, ...):
+    only exact-timestamp sources are held to the minute; coarse sources fall back to whole-hour granularity.
+    Regression: that fallback branch in jobs._query had no web-level test (only exact sources were covered).
+    Also checks a crafted non-numeric ?within= value is ignored, not a 500."""
+    from datetime import timedelta
+
+    from jobapply.models import utcnow
+
+    login(client, "demo", "demo1234")
+    with Session(engine) as s:
+        demo = s.exec(select(User).where(User.username == "demo")).one()
+        # Both posted ~20 min ago. A within=10 (minutes) window drops the exact-source job but must keep the
+        # coarse-source one (widened to a 1-hour window).
+        coarse = Job(dedupe_key="coarse-key", title="Yonder Coarse Role", company="Acme",
+                     location="Remote", source="indeed", posted_at=utcnow() - timedelta(minutes=20))
+        exact = Job(dedupe_key="exact-key", title="Yonder Exact Role", company="Acme",
+                    location="Remote", source="greenhouse", posted_at=utcnow() - timedelta(minutes=20))
+        s.add_all([coarse, exact])
+        s.commit()
+        s.refresh(coarse)
+        s.refresh(exact)
+        s.add_all([Application(user_id=demo.id, job_id=coarse.id),
+                   Application(user_id=demo.id, job_id=exact.id)])
+        s.commit()
+
+    within = client.get("/jobs?within=10").text
+    assert "Yonder Coarse Role" in within  # coarse source kept at whole-hour granularity
+    assert "Yonder Exact Role" not in within  # exact source dropped at minute precision
+
+    # A crafted non-numeric value is ignored (filter skipped), not a 500.
+    bad = client.get("/jobs?within=abc")
+    assert bad.status_code == 200
+    assert "Yonder Coarse Role" in bad.text and "Yonder Exact Role" in bad.text
+
+
+def test_settings_saves_max_age_minutes(client, engine):
+    _, csrf = login(client, "demo", "demo1234")
+    resp = client.post(
+        "/settings/filters",
+        data={"csrf": csrf, "roles": "python", "max_age_hours": "72", "max_age_minutes": "30"},
+    )
+    assert resp.status_code == 303
+    with Session(engine) as s:
+        demo = s.exec(select(User).where(User.username == "demo")).one()
+        assert demo.filters["max_age_minutes"] == 30
+    # Clearing the preset (empty value) stores None and falls back to hours.
+    resp = client.post(
+        "/settings/filters",
+        data={"csrf": csrf, "roles": "python", "max_age_hours": "48", "max_age_minutes": ""},
+    )
+    assert resp.status_code == 303
+    with Session(engine) as s:
+        demo = s.exec(select(User).where(User.username == "demo")).one()
+        assert demo.filters["max_age_minutes"] is None and demo.filters["max_age_hours"] == 48
