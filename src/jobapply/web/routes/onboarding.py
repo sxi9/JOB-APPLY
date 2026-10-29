@@ -25,13 +25,20 @@ from jobapply.roles import all_fields
 from jobapply.sites import connect
 from jobapply.web.deps import Ctx, as_list, flash, get_ctx, read_form, split_lines
 from jobapply.web.routes.profile import PROFILE_FIELDS, missing_fields, profile_save, resume_file_upload
-from jobapply.web.routes.settings import connect_user_site, read_cookie_export
+from jobapply.web.routes.settings import (
+    connect_user_site,
+    mailbox_context,
+    read_cookie_export,
+    run_mailbox_test,
+    save_mailbox_form,
+)
 
 router = APIRouter()
 
-# Order the wizard walks through. Each POST saves its step and redirects to the next one. The last step is the
-# generic "Connect <site>" page (its name is kept for existing links).
-STEPS = ["basics", "eligibility", "roles", "resume", "answers", "linkedin"]
+# Order the wizard walks through. Each POST saves its step and redirects to the next one. The "mailbox" step
+# (Gmail app password for OTP / verification mail) reuses the Settings → Mailbox handlers. The last step is
+# the generic "Connect <site>" page (its name is kept for existing links).
+STEPS = ["basics", "eligibility", "roles", "resume", "answers", "mailbox", "linkedin"]
 CONNECT_SITES = list(connect.SITES)
 _FIELD_MAP = {key: (label, kind) for key, label, kind in PROFILE_FIELDS}
 
@@ -74,6 +81,7 @@ def onboarding_page(step: str = "basics", ctx: Ctx = Depends(get_ctx)):
         resume_file_name=Path(resume_file).name if resume_file else "",
         connect_sites=connect_sites,
         linkedin_status=connect_sites[0]["status"],
+        **mailbox_context(ctx),
     )
 
 
@@ -130,6 +138,30 @@ async def ob_resume(request: Request, ctx: Ctx = Depends(get_ctx)):
 @router.post("/onboarding/answers")
 async def ob_answers(request: Request, ctx: Ctx = Depends(get_ctx)):
     await profile_save(request, ctx)
+    return _to("mailbox")
+
+
+@router.post("/onboarding/mailbox")
+async def ob_mailbox(request: Request, ctx: Ctx = Depends(get_ctx)):
+    """Save the mailbox (Gmail app password etc.) through the same `settings.save_mailbox_form` the Settings
+    card uses; with `action=test` the connection test runs right after. Stays on the step so the result is
+    visible; "Continue" / "Skip" move on."""
+    form = await read_form(request)
+    if save_mailbox_form(request, ctx, form) and str(form.get("action") or "") == "test":
+        run_mailbox_test(request, ctx)
+    return _to("mailbox")
+
+
+@router.post("/onboarding/mailbox/test")
+async def ob_mailbox_test(request: Request, ctx: Ctx = Depends(get_ctx)):
+    await read_form(request)
+    run_mailbox_test(request, ctx)
+    return _to("mailbox")
+
+
+@router.post("/onboarding/mailbox/skip")
+async def ob_mailbox_skip(request: Request, ctx: Ctx = Depends(get_ctx)):
+    await read_form(request)  # CSRF
     return _to("linkedin")
 
 

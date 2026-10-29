@@ -576,3 +576,30 @@ def test_settings_saves_role_selection(client, engine):
     with Session(engine) as s:
         demo = s.exec(select(User).where(User.username == "demo")).one()
         assert demo.filters["role_selection"] == ["cybersecurity:soc"]
+
+
+# ----------------------------------------------------------------- mailbox card (details in tests/test_mailbox.py)
+
+
+def test_settings_mailbox_card_renders_and_needs_csrf(client, engine):
+    _, csrf = login(client, "demo", "demo1234")
+    page = client.get("/settings").text
+    assert 'id="mailbox"' in page and 'action="/settings/mailbox"' in page and 'id="mailbox-status"' in page
+    assert page.index('id="mailbox"') < page.index('id="credentials"')
+    assert "imap.gmail.com" in page and "smtp.gmail.com" in page and "docs/MAILBOX.md" in page
+    assert client.post("/settings/mailbox", data={"email": "demo@gmail.com", "password": "x"}).status_code == 403
+    assert client.post("/settings/mailbox/test", data={}).status_code == 403
+    assert client.post("/settings/mailbox/delete", data={}).status_code == 403
+    resp = client.post("/settings/mailbox", data={"csrf": csrf, "email": "demo@gmail.com", "password": "app-pw-1234"})
+    assert resp.status_code == 303 and resp.headers["location"] == "/settings#mailbox"
+    page = client.get("/settings").text
+    assert "Mailbox saved for demo@gmail.com" in page and "app-pw-1234" not in page
+    with Session(engine) as s:
+        demo = s.exec(select(User).where(User.username == "demo")).one()
+        creds = s.exec(select(Credential).where(Credential.user_id == demo.id, Credential.site == "mailbox")).all()
+        assert {c.kind for c in creds} == {"imap", "smtp"}
+        assert all(b"app-pw-1234" not in c.secret_blob for c in creds)
+        assert "password" not in demo.profile["mailbox"] and demo.profile["mailbox"]["status"] == "untested"
+    # the onboarding wizard carries the same step
+    assert client.get("/onboarding?step=mailbox").status_code == 200
+    assert 'action="/onboarding/mailbox"' in client.get("/onboarding?step=mailbox").text

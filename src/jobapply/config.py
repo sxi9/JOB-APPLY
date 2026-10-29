@@ -117,6 +117,8 @@ class Settings(BaseSettings):
     instahyre_active_hours: str | None = None
     cutshort_active_hours: str | None = None
     wellfound_active_hours: str | None = None
+    # Workday (account site: per-company accounts created by the apply worker). Empty = the LinkedIn window.
+    workday_active_hours: str | None = None
 
     # Referral outreach (DRAFT-ONLY by default). Generating/queuing drafts never contacts anyone.
     # SENDING a connection request or message is gated behind this switch (off), the admin toggle, a

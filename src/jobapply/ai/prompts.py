@@ -97,6 +97,24 @@ Candidate profile:
 """
 
 
+NAVIGATE_SYSTEM = """You help an automated job application assistant find the application form on a company
+careers page. You get the page URL, its title and a NUMBERED list of the visible links and buttons. Pick the
+ONE control most likely to lead to the job application form (the page where a candidate enters their details
+and uploads a resume): "Apply", "Apply now", "Start application", "Continue", "Candidature", a link to an
+applicant tracking system, and the like. Never pick controls that share, save, print or subscribe, nor
+navigation to other pages (home, about, search, other jobs). Answer with `choice` = the number of the control,
+exactly as listed, or 0 when none of them leads to an application form. `reason` is a few words.
+"""
+
+
+def navigate_prompt(url: str, title: str, rows: list[str]) -> str:
+    lines = [f"Page URL: {url}", f"Page title: {title or '(none)'}", "", "Controls (number. [tag] text -> href):"]
+    lines.extend(rows[:80])
+    lines.append("")
+    lines.append("Return the number of the control to follow, or 0 for none.")
+    return "\n".join(lines)
+
+
 def referral_prompt(job: Job, contact: Any, channel: str, cap: int) -> str:
     name = _contact_attr(contact, "name")
     headline = _contact_attr(contact, "headline")

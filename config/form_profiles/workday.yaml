@@ -1,0 +1,85 @@
+# Workday career sites (<tenant>.wd<N>.myworkdayjobs.com/<site>). Driven by sites/workday/wizard.py, one
+# FormRunner pass per wizard step. Workday inputs carry generated ids (input-6, input-7, ...) and no name, but
+# every field sits in a div[data-automation-id="formField-<name>"] with a real <label for>, so fields are
+# matched by label. The sign-in / create-account ids (email, password, verifyPassword, createAccountCheckbox,
+# createAccountSubmitButton, signInSubmitButton, beecatcher honeypot, adventureButton, applyManually,
+# autofillWithResume, applyFlowPage, progressBar*) were seen live on 2026-10-29 (logged out); the wizard
+# step fields below are the standard Workday layout and are verified only on the inline test fixtures.
+#
+# `fields` is the union the plain FormRunner uses (a Workday URL routed through the ATS path); `workday_steps`
+# is what the wizard installs per step so the profile match rate is judged against that step's own fields.
+# "Save and Continue" / "Next" are never submits; the only final control is Submit on the Review step.
+ats: workday
+detect: "[\\w-]+\\.wd\\d+\\.myworkdayjobs\\.com/"
+fields:
+  "label=First Name": profile.first_name
+  "label=Last Name": profile.last_name
+  "label=Email Address": profile.email
+  "label=Phone Number": profile.phone
+  "label=Address Line 1": derived.address_line_1
+  "label=City": derived.city
+  "label=Postal Code": derived.postal_code
+  "label=Country Phone Code": derived.phone_country
+  "label=Phone Device Type": const:Mobile
+  "label=How Did You Hear About Us": derived.source
+  "label=LinkedIn": profile.linkedin
+  "label=Website": profile.portfolio
+  "label=Job Title": profile.current_title
+  "label=Company": profile.current_company
+  "label=Skills": derived.skills_text
+  "input[type=file]": derived.resume_path
+  "label=read and consent": const:Yes
+  "label=Gender": profile.gender
+  "label=Veteran": profile.veteran_status
+  "label=Disability": profile.disability_status
+workday_steps:
+  "My Information":
+    "label=First Name": profile.first_name
+    "label=Last Name": profile.last_name
+    "label=Email Address": profile.email
+    "label=Phone Number": profile.phone
+    "label=Address Line 1": derived.address_line_1
+    "label=City": derived.city
+    "label=Postal Code": derived.postal_code
+    "label=Country Phone Code": derived.phone_country
+    "label=Phone Device Type": const:Mobile
+    "label=How Did You Hear About Us": derived.source
+    "label=Preferred Name": skip
+    "label=Address Line 2": skip
+    "label=Phone Extension": skip
+  "My Experience":
+    "label=Job Title": profile.current_title
+    "label=Company": profile.current_company
+    "label=Location": profile.location
+    "label=Role Description": derived.role_description
+    "label=School or University": derived.school
+    "label=Degree": derived.degree
+    "label=Field of Study": derived.field_of_study
+    "label=Skills": derived.skills_text
+    "label=LinkedIn": profile.linkedin
+    "label=Website": profile.portfolio
+    "input[type=file]": derived.resume_path
+  "Application Questions": {}
+  "Voluntary Disclosures":
+    "label=Gender": profile.gender
+    "label=Veteran": profile.veteran_status
+    "label=Disability": profile.disability_status
+    "label=Ethnicity": skip
+    "label=Hispanic": skip
+    "label=read and consent": const:Yes
+    "label=Terms and Conditions": const:Yes
+  "Self Identify":
+    "label=Name": derived.full_name
+    "label=Date": derived.today
+    "label=Language": const:English
+    "label=Disability": profile.disability_status
+    "label=Veteran": profile.veteran_status
+submit: "[data-automation-id=\"bottom-navigation-next-button\"]:has-text(\"Submit\")"
+success:
+  - "[data-automation-id=\"applySuccessPage\"]"
+  - "text=Thank you for applying"
+  - "text=successfully submitted"
+never:
+  - "input[name=website]"      # beecatcher honeypot ("for robots only")
+  - "input[type=search]"
+  - "input[type=password]"

@@ -22,6 +22,7 @@ from jobapply.config import get_settings
 from jobapply.forms.fields import FormField, detect_captcha, extract_fields, match_selector
 from jobapply.forms.fingerprint import domain_of, fingerprint
 from jobapply.forms.mapper import map_fields, mapping_to_profile_fields
+from jobapply.forms.navigator import STATUS_FORM, STATUS_NO_FORM, WIZARD_MAX_STEPS, Navigator
 from jobapply.forms.profiles import (
     FormProfileSpec,
     VaultView,
@@ -146,6 +147,10 @@ class FillResult:
     submitted: bool = False
     paused_reason: str = ""
     error: str = ""
+    # Set by the navigator: the hops taken to reach the form, and a mailto: apply link it found (the pipeline
+    # then applies by email instead of filling a form).
+    hops: str = ""
+    mailto: str = ""
 
     @property
     def filled(self) -> int:
@@ -271,6 +276,8 @@ class FormRunner:
         profiles_dir: Path | None = None,
         learn: bool = True,
         min_answer_confidence: int = 50,
+        navigate: bool = True,
+        nav_options: dict[str, Any] | None = None,
     ):
         self.session = session
         self.vault = vault
@@ -280,6 +287,11 @@ class FormRunner:
         self.learn = learn
         self.min_answer_confidence = min_answer_confidence
         self.profiles = load_builtin_profiles(profiles_dir or get_settings().profiles_dir)
+        # The navigator (forms/navigator.py) finds the form from any landing page: banners, apply links,
+        # popups, iframes, wizards, account walls, an LLM pick from a numbered list. `nav_options` are passed
+        # to it (tests inject a fake IMAP client and short OTP timeouts there).
+        self.navigate = navigate
+        self.nav_options = dict(nav_options or {})
 
     # ------------------------------------------------------------ profile lookup
 
@@ -761,24 +773,77 @@ class FormRunner:
                     if not step.optional:
                         raise
 
-        fields, hop = self._locate_form(page, spec)
+        nav = self._navigator(page, submit) if self.navigate else None
+        fields, hop, stop = self._locate_form(page, spec, nav)
         if not submit:
             page.evaluate(SUBMIT_GUARD_JS)  # the init script covers navigations; this covers set_content
         if hop:
             url = page.url
-            result.url = url
+            result.url, result.hops = url, hop
             spec = profile_for_url(url, self.profiles) or spec or (self.profiles.get(ats_hint) if ats_hint else None)
             log.info("form located", hop=hop, url=url, ats=spec.ats if spec else None)
+        if stop is not None:
+            # The navigator could not reach a form: captcha, account wall, a mailto: apply link, or nothing to
+            # fill after the hop budget. Pause with its reason; the pipeline shows it on the Queue page.
+            result.url = page.url
+            result.paused_reason, result.mailto = stop.reason, stop.mailto
+            self._screenshot(page, screenshot_path, result)
+            log.info("navigator stopped", status=stop.status, reason=stop.reason, hops=hop)
+            return result
         captcha = detect_captcha(page)
         result.fields_total = len([f for f in fields if not f.hidden])
-        never = set()
-        for sel in spec.never if spec else []:
-            never.update(f.idx for f in match_selector(fields, sel))
-        fields = [f for f in fields if f.idx not in never]
+        fields = self._drop_never(fields, spec)
         if not fields:
             result.error = "no form fields found on the page"
             return result
 
+        plan, learned = self._plan(page, fields, url or "", spec, ats_hint, result)
+        result.plan = plan
+        self._execute(page, plan, fields, result)
+        self._report_unfilled(plan, fields, result)
+        if nav is not None and not captcha and not result.needs_human and not result.unfilled_required:
+            captcha = self._wizard(page, nav, fields, spec, ats_hint, result)
+
+        self._screenshot(page, screenshot_path, result)
+
+        if captcha:
+            result.paused_reason = f"captcha on page ({captcha})"
+        elif result.needs_human:
+            result.paused_reason = "a question needs a human"
+        elif result.unfilled_required:
+            result.paused_reason = "required fields left empty"
+        if learned is not None and result.profile_origin == "learned":
+            self._bump(learned, success=not result.unfilled_required)
+
+        if submit and not result.paused_reason:
+            self._submit(page, spec, result)
+        return result
+
+    # ------------------------------------------------------------ run() pieces (shared with the wizard loop)
+
+    @staticmethod
+    def _screenshot(page, screenshot_path: Path | None, result: FillResult) -> None:
+        if not screenshot_path:
+            return
+        try:
+            screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(screenshot_path), full_page=True)
+            result.screenshot_path = str(screenshot_path)
+        except Exception as exc:  # noqa: BLE001 - a lost screenshot must not lose the outcome
+            log.warning("screenshot failed", error=str(exc)[:160])
+
+    @staticmethod
+    def _drop_never(fields: list[FormField], spec: FormProfileSpec | None) -> list[FormField]:
+        never: set[int] = set()
+        for sel in spec.never if spec else []:
+            never.update(f.idx for f in match_selector(fields, sel))
+        return [f for f in fields if f.idx not in never]
+
+    def _plan(self, page, fields: list[FormField], url: str, spec: FormProfileSpec | None, ats_hint: str | None,
+              result: FillResult) -> tuple[list[PlannedFill], FormProfile | None]:
+        """Profile selection: built-in by URL, learned by fingerprint, else the AI mapper (whose mapping is
+        saved as a learned profile). Custom questions are resolved on top. Returns the plan and the learned
+        row that was used (for the success/failure tally)."""
         domain, fp = domain_of(url or ""), fingerprint(fields)
         plan: list[PlannedFill] = []
         ai_mapping = None
@@ -815,9 +880,12 @@ class FormRunner:
                 if not plan:
                     result.error = f"no profile and the AI mapper failed: {exc}"
         self.fill_questions(plan, fields, result, ai_mapping)
-        result.plan = plan
+        return plan, learned
 
+    def _execute(self, page, plan: list[PlannedFill], fields: list[FormField], result: FillResult) -> None:
         for p in plan:
+            if p.done:
+                continue
             try:
                 if p.kind == "question" and p.value is None:
                     raise ValueError("no answer")
@@ -840,6 +908,9 @@ class FormRunner:
             if err:
                 if not self._ai_recover(page, p, fields, result, err):
                     result.needs_human.append(f"{p.field.question[:100]}: form error {err[:80]!r}")
+
+    @staticmethod
+    def _report_unfilled(plan: list[PlannedFill], fields: list[FormField], result: FillResult) -> None:
         done_idx = {p.field.idx for p in plan if p.done}
         choice_names_done = {p.field.name for p in plan if p.done and p.field.is_choice}
         for f in fields:
@@ -848,23 +919,7 @@ class FormRunner:
         result.unfilled_required = list(dict.fromkeys(result.unfilled_required))
         result.needs_human = list(dict.fromkeys(result.needs_human))
 
-        if screenshot_path:
-            screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-            page.screenshot(path=str(screenshot_path), full_page=True)
-            result.screenshot_path = str(screenshot_path)
-
-        if captcha:
-            result.paused_reason = f"captcha on page ({captcha})"
-        elif result.needs_human:
-            result.paused_reason = "a question needs a human"
-        elif result.unfilled_required:
-            result.paused_reason = "required fields left empty"
-        if learned is not None and result.profile_origin == "learned":
-            self._bump(learned, success=not result.unfilled_required)
-
-        if submit and not result.paused_reason:
-            self._submit(page, spec, result)
-        return result
+    # ------------------------------------------------------------ locating the form
 
     # Fewer visible fields than this on a page means "not the application form" (newsletter box, search).
     MIN_FORM_FIELDS = 3
@@ -873,25 +928,88 @@ class FormRunner:
     def _usable(self, fields: list[FormField]) -> bool:
         return len([f for f in fields if not f.hidden]) >= self.MIN_FORM_FIELDS
 
-    def _locate_form(self, page, spec: FormProfileSpec | None) -> tuple[list[FormField], str]:
-        """Find the application form: on the page itself, inside an embedded ATS frame (navigated to directly
-        so filling, screenshots and submit work on a plain page), or one "Apply" link away. At most two hops.
-        Returns the fields and a short description of the hop taken ("" when the page already had the form)."""
+    def _navigator(self, page, submit: bool) -> Navigator:
+        opts = {"session": self.session, "llm": self.llm, "user": self.user, "profile": self.vault.profile,
+                "profiles": self.profiles, "allow_final": bool(submit), **self.nav_options}
+        return Navigator(page, **opts)
+
+    def _locate_form(self, page, spec: FormProfileSpec | None, nav=None):
+        """Find the application form. With a navigator (the default) any landing page gets the full treatment
+        (forms/navigator.py); without one, the legacy two-hop search: an embedded ATS frame (navigated to
+        directly so filling, screenshots and submit work on a plain page), or one "Apply" link away.
+
+        Returns `(fields, hops, stop)`: `stop` is the navigator's outcome when it could not reach a form that
+        the caller should pause on (captcha, account wall, mailto, nothing fillable after the hop budget);
+        otherwise None and `fields` are what to fill (a page with a few fields but no better target is still
+        filled, as before)."""
+        fields = extract_fields(page)
+        # A sign-in wall with three visible inputs (email, password, "remember me") counts as usable here, but
+        # it is the navigator's job (stored-account sign-in / generic sign-up), never a form to fill.
+        if self._usable(fields) and (nav is None or not nav.is_account_wall()):
+            return fields, "", None
+        if nav is not None:
+            outcome = nav.find_form()
+            hops = " -> ".join(outcome.hops)
+            if outcome.status == STATUS_FORM:
+                return outcome.fields, hops, None
+            if outcome.status == STATUS_NO_FORM and any(not f.hidden for f in outcome.fields):
+                return outcome.fields, hops, None  # a short form (quick apply) is still worth filling
+            return outcome.fields, hops, outcome
         hops: list[str] = []
-        for _ in range(3):
-            fields = extract_fields(page)
-            if self._usable(fields):
-                return fields, " -> ".join(hops)
+        for _ in range(2):
             frame_url = self._form_frame_url(page)
             if frame_url:
                 page.goto(frame_url, wait_until="domcontentloaded", timeout=60000)
                 page.wait_for_timeout(1500)
                 hops.append(f"frame {frame_url[:80]}")
-                continue
-            if len(hops) >= 2 or not self._follow_apply_link(page):
-                return fields, " -> ".join(hops)
-            hops.append("apply link")
-        return extract_fields(page), " -> ".join(hops)
+            elif not self._follow_apply_link(page):
+                break
+            else:
+                hops.append("apply link")
+            fields = extract_fields(page)
+            if self._usable(fields):
+                break
+        return fields, " -> ".join(hops), None
+
+    # ------------------------------------------------------------ multi-step wizards
+
+    def _wizard(self, page, nav, fields: list[FormField], spec: FormProfileSpec | None, ats_hint: str | None,
+                result: FillResult) -> str:
+        """After the visible step is filled, walk a wizard: click Next / Continue (never a final submit, see
+        navigator.FINAL), plan and fill whatever new fields appear, up to `WIZARD_MAX_STEPS`. In a dry run the
+        submit guard stops a Next that posts the form, so a server-side wizard ends at step one; a JS wizard
+        advances either way. Returns a captcha marker when one shows up on a later step, else ""."""
+        seen = {(f.selector, f.label, f.type) for f in fields if not f.hidden}
+        for _ in range(WIZARD_MAX_STEPS):
+            nxt = nav.next_control()
+            if nxt is None:
+                return ""
+            before = page.url
+            nav.visited.add((before, nxt.key))
+            if nav.follow(nxt) == "failed":
+                return ""
+            nav.dismiss_banners()
+            captcha = detect_captcha(page)
+            if captcha:
+                return captcha
+            new_fields = [f for f in extract_fields(page)
+                          if not f.hidden and (f.selector, f.label, f.type) not in seen]
+            new_fields = self._drop_never(new_fields, spec)
+            if not new_fields:
+                return ""
+            seen.update((f.selector, f.label, f.type) for f in new_fields)
+            if page.url != before:
+                result.url = page.url
+            result.hops = " -> ".join(h for h in (result.hops, f"wizard {nxt.label!r}") if h)
+            log.info("wizard step", control=nxt.text[:40], new_fields=len(new_fields), url=page.url[:80])
+            result.fields_total += len([f for f in new_fields if not f.hidden])
+            plan, _ = self._plan(page, new_fields, page.url, spec, ats_hint, result)
+            result.plan.extend(plan)
+            self._execute(page, plan, new_fields, result)
+            self._report_unfilled(plan, new_fields, result)
+            if result.needs_human or result.unfilled_required:
+                return ""
+        return ""
 
     def _form_frame_url(self, page) -> str | None:
         """URL of the child frame that holds the application form, preferring one a profile recognises."""

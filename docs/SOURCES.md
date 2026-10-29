@@ -9,7 +9,7 @@ Order is the order we add them. Rows 1 to 6 give exact posting timestamps, so "p
 | 3 | Ashby | public JSON API | no | yes, form filler |
 | 4 | Workable | public JSON API | no | yes |
 | 5 | SmartRecruiters | public JSON API | no | yes |
-| 6 | Workday tenants | JSON endpoint per tenant | account per tenant | yes, with signup + OTP |
+| 6 | Workday tenants (`<tenant>.wd<N>.myworkdayjobs.com/<site>`) | postings arrive through the ATS detector (`detect_from_url`) from any source: the company list, LinkedIn offsite resolution, a Naukri / Instahyre "apply on company site", an HN / aggregator link; no public search of our own yet | **account per tenant, created automatically** by the apply run: profile email + a generated password kept in the vault (`workday:<tenant>`, kind `login`), confirmed with the code / link read from the user's Mailbox (Settings → Mailbox, Gmail app password); never created in a dry run | yes: `jobapply sites apply -s workday` (`sites/workday`, same gate stack as the other assisted sites: kill switch, global dry run, site enabled, auto-submit, caps, active hours, challenge cooldown), wizard walked by the FormRunner, Submit on Review only when every gate is open; live-verified logged out only (job page, apply dialog, sign-in / create-account form); the wizard steps are fixture-only until the first real run |
 | 7 | LinkedIn | guest search for listings, logged-in for Easy Apply | yes | capped, assisted |
 | 8 | Naukri | logged-out JSON search API (`/jobapi/v3/search`, answered "recaptcha required" HTTP 406 from this IP on 2026-10-29, so `assisted.naukri.enabled: false` by default) with a headless SRP fallback inside a user's profile; logged-in profile for applying | search: no (when the API lets us); apply: yes, cookie import | one-click Apply + chatbot questions (`sites/naukri`), "apply on company site" re-routed to the ATS filler, `jobapply naukri refresh-profile`; fixture-only until the first logged-in dry run |
 | 9 | Indeed | python-jobspy | no for listing | redirect to ATS mostly |
@@ -18,6 +18,16 @@ Order is the order we add them. Rows 1 to 6 give exact posting timestamps, so "p
 | 12 | Adzuna, JSearch (RapidAPI), Remotive, RemoteOK, Jobicy, Arbeitnow, The Muse, USAJobs | REST APIs | API key only | redirect to source |
 | 13 | HN "Who is hiring", YC jobs | monthly thread parse, API | no | email apply |
 | 14 | Company careers pages | ATS detector then poll the matching API | no | depends on ATS |
+
+## Apply links on any other host (the universal path)
+
+An `apply_url` whose host is none of the above used to be paused "apply manually". Now it goes through the
+form navigator (`forms/navigator.py`) under the synthetic `external` site: cookie banners, Apply buttons,
+popups, iframes and wizards are handled, an account wall is signed in with a stored account or (real run with
+auto-submit on, Mailbox configured) created with the profile email + a generated password and the mailed
+code, and the form is filled with the usual profile / answer bank / AI fallback. A `mailto:` apply link is
+applied to by email (`email` site). A Workday host found this way is **never** navigated: `detect_from_url`
+wins and the job is handed to the Workday applier. Details: [EXTERNAL_APPLY.md](EXTERNAL_APPLY.md).
 
 ## Assisted sites (rows 7, 8, 11)
 

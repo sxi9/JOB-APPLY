@@ -1,5 +1,5 @@
 """`jobapply sites ...` (Naukri, Instahyre, Cutshort, Wellfound: session check, cookie import, public search,
-gated apply) and `jobapply naukri ...` (profile refresh)."""
+gated apply; Workday: account check, gated apply, forget-account) and `jobapply naukri ...` (profile refresh)."""
 
 from __future__ import annotations
 
@@ -10,22 +10,61 @@ import typer
 from sqlmodel import select
 
 from jobapply.logs import get_logger
+from jobapply.users import ACCOUNT_SITES
 
 sites_app = typer.Typer(no_args_is_help=True,
                         help="Assisted sites (naukri, instahyre, cutshort, wellfound): check, import-cookies, "
-                             "search, apply. Login is a cookie export; nothing here types a credential.")
+                             "search, apply. Login is a cookie export; nothing here types a credential. "
+                             "Workday (account site): check, apply, forget-account; one candidate account per "
+                             "company is created by the apply run with the profile email and a generated password.")
 naukri_app = typer.Typer(no_args_is_help=True, help="Naukri extras: daily profile refresh")
 log = get_logger("jobapply.cli.sites")
 
-SITES = ("naukri", "instahyre", "cutshort", "wellfound")
+COOKIE_SITES = ("naukri", "instahyre", "cutshort", "wellfound")
+SITES = (*COOKIE_SITES, *ACCOUNT_SITES)
 
 
-def _site(value: str) -> str:
+def _site(value: str, allowed: tuple[str, ...] = SITES) -> str:
     site = (value or "").strip().lower()
     if site not in SITES:
         typer.echo(f"unknown site {value!r}; one of {', '.join(SITES)}", err=True)
         raise typer.Exit(code=2)
+    if site not in allowed:
+        what = "accounts are created per company by the apply run" if site in ACCOUNT_SITES else "not an account site"
+        typer.echo(f"{site}: not supported by this command ({what}); one of {', '.join(allowed)}", err=True)
+        raise typer.Exit(code=2)
     return site
+
+
+def _workday_check(user: str, user_id: int) -> None:
+    """Workday has no single login: report the challenge cooldown and the per-company accounts in the vault."""
+    from jobapply.db import session_scope
+    from jobapply.models import User
+    from jobapply.repo import UserScope
+    from jobapply.sites.workday.account import tenant_accounts
+    from jobapply.sites.workday.session import cooldown_until, throttled
+    from jobapply.vault import Vault, VaultError
+
+    with session_scope() as session:
+        u = session.get(User, user_id)
+        site_row = UserScope(session, u).site("workday")
+        blocked = throttled(u, site_row)
+        until = cooldown_until(u)
+        try:
+            vault = Vault()
+        except VaultError:
+            vault = None
+        accounts = tenant_accounts(session, user_id, vault)
+    enabled = bool(site_row is not None and site_row.enabled)
+    typer.echo(f"workday: {'enabled' if enabled else 'disabled'} for {user!r}; "
+               f"{'cooldown until ' + until.isoformat() if blocked and until else 'no cooldown'}; "
+               f"{len(accounts)} company account(s)")
+    for a in accounts:
+        state = "verified" if a["verified"] else ("unverified" if a["verified"] is False else "unreadable (vault key?)")
+        typer.echo(f"  {a['tenant']:<24} {a['username']:<32} {state}")
+    if vault is None:
+        typer.echo("vault not configured (JOBAPPLY_VAULT_KEY): no account can be created", err=True)
+    raise typer.Exit(code=1 if blocked else 0)
 
 
 def _user_id(username: str) -> int:
@@ -43,10 +82,13 @@ def _user_id(username: str) -> int:
 @sites_app.command()
 def check(user: str = typer.Option(..., "--user", "-u", help="Username"),
           site: str = typer.Option(..., "--site", "-s", help=", ".join(SITES))) -> None:
-    """Open the site with the saved (headless) profile and report ok | login | challenge | unknown."""
+    """Open the site with the saved (headless) profile and report ok | login | challenge | unknown. For Workday:
+    the challenge cooldown and the per-company accounts stored in the vault (never a password)."""
     from jobapply.sites.connect import check_session_for
 
     site = _site(site)
+    if site in ACCOUNT_SITES:
+        _workday_check(user, _user_id(user))
     status = check_session_for(site, _user_id(user))
     typer.echo(f"{site} session: {status}")
     raise typer.Exit(code=0 if status == "ok" else 1)
@@ -63,7 +105,7 @@ def import_cookies(user: str = typer.Option(..., "--user", "-u", help="Username"
     site's own cookies are used and their values are never printed."""
     from jobapply.sites.connect import import_cookies_for
 
-    site = _site(site)
+    site = _site(site, COOKIE_SITES)
     result = import_cookies_for(site, _user_id(user), Path(path), verify=check_after)
     typer.echo(f"imported {result.count} {site} cookie(s) into the profile for {user!r}")
     if check_after:
@@ -94,7 +136,7 @@ def search(
     """Public (logged-out) search on one site and print a table."""
     import importlib
 
-    site = _site(site)
+    site = _site(site, COOKIE_SITES)  # Workday postings come from the ATS collectors / LinkedIn, not a search here
     search_mod = importlib.import_module(f"jobapply.sites.{site}.search")
     jobs = search_mod.search_once(list(query), location, hours, max_results=limit, max_requests=max_requests)
     header = f"{'title':<40} {'company':<24} {'location':<22} {'age':>4} url"
@@ -133,7 +175,9 @@ def apply(
 ) -> None:
     """Apply to queued jobs on one site inside each user's logged-in profile, honouring the kill switch, the
     global dry-run switch, the site's enabled / auto-submit flags, caps, active hours and challenge cooldowns.
-    A real submit needs --submit AND the global dry-run switch off AND the site's auto-submit on."""
+    A real submit needs --submit AND the global dry-run switch off AND the site's auto-submit on. Workday also
+    creates the per-company account (profile email + generated password, mailbox verification) only on a real
+    run; a dry run walks the wizard with an existing account or stops before creating one."""
     from jobapply.pipeline.apply import apply_assisted, site_active_hours
     from jobapply.sites.browser import is_active_hours
 
@@ -146,6 +190,40 @@ def apply(
     for o in outcomes:
         typer.echo(" ".join(f"{k}={v}" for k, v in o.items()))
     typer.echo(f"{len(outcomes)} outcome(s), dry_run={dry_run}")
+
+
+@sites_app.command("forget-account")
+def forget_account_cmd(
+    user: str = typer.Option(..., "--user", "-u", help="Username"),
+    site: str = typer.Option("workday", "--site", "-s", help=", ".join((*ACCOUNT_SITES, "external"))),
+    tenant: str = typer.Option(..., "--tenant", "-t",
+                               help="Workday tenant (the <tenant> in <tenant>.wdN.myworkdayjobs.com), or with "
+                                    "-s external the host (careers.acme.com) of a company site the navigator "
+                                    "created an account on"),
+) -> None:
+    """Forget the stored account for one company (the vault row `workday:<tenant>`, or `ext:<host>` for a
+    company site the generic navigator signed up on with `-s external`). The account on the site itself is not
+    touched; the next real run creates a fresh one (which the site may reject as already existing: reset the
+    password on that tenant's Candidate Home instead)."""
+    from jobapply.db import session_scope
+
+    if (site or "").strip().lower() == "external":
+        from jobapply.forms.navigator import forget_external_account
+
+        user_id = _user_id(user)
+        with session_scope() as session:
+            gone = forget_external_account(session, user_id, tenant)
+        typer.echo(f"external: {'forgot' if gone else 'no stored'} account for host "
+                   f"{tenant.strip().lower()!r} ({user})")
+        raise typer.Exit(code=0 if gone else 1)
+    from jobapply.sites.workday.account import forget_account
+
+    site = _site(site, ACCOUNT_SITES)
+    user_id = _user_id(user)
+    with session_scope() as session:
+        gone = forget_account(session, user_id, tenant)
+    typer.echo(f"{site}: {'forgot' if gone else 'no stored'} account for tenant {tenant.strip().lower()!r} ({user})")
+    raise typer.Exit(code=0 if gone else 1)
 
 
 @naukri_app.command("refresh-profile")
@@ -163,4 +241,4 @@ def refresh_profile(
     raise typer.Exit(code=0 if out.get("status") in ("dry_run", "refreshed") else 1)
 
 
-__all__ = ["sites_app", "naukri_app", "SITES"]
+__all__ = ["sites_app", "naukri_app", "SITES", "COOKIE_SITES"]

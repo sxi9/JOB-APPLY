@@ -11,7 +11,8 @@
     <div class="row"><span class="chip chip-{{ app.status | status_color }}">{{ app.status | label }}</span>
       <span class="score {{ app.score | score_class }}">{{ app.score if app.score is not none else "–" }}</span></div>
   </div>
-  {% if app.error %}<div class="flash flash-error" style="margin-top:10px">{{ app.error }}</div>{% endif %}
+  {% if app.error %}<div class="flash flash-error" style="margin-top:10px">{{ app.error }}
+    {% if app.status.value == 'paused' and app.error.lower().startswith('mailbox not configured') %}<div style="margin-top:6px"><a class="btn btn-sm" href="/settings#mailbox">Set up your Mailbox in Settings</a> <span class="muted small">(the apply run reads the verification code there; Approve again afterwards)</span></div>{% endif %}</div>{% endif %}
   {% if app.score_reason %}<p class="small">{{ app.score_reason }}</p>{% endif %}
   {% set recoveries = (app.answers or {}).get("__ai_recoveries__") %}
   {% if recoveries %}<div class="flash flash-ok small" style="margin-top:10px"><strong>AI fixed during fill:</strong>

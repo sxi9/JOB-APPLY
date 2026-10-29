@@ -6,6 +6,15 @@ from fastapi.responses import RedirectResponse
 from jobapply.ai.providers import CATALOG, parse_keys, parse_order, server_configs
 from jobapply.ai.service import user_keys
 from jobapply.config import get_settings
+from jobapply.mail.mailbox import PROVIDERS as MAILBOX_PROVIDERS
+from jobapply.mail.mailbox import (
+    MailboxSettings,
+    clear_mailbox,
+    mailbox_status,
+    save_mailbox,
+    status_chip,
+    test_mailbox,
+)
 from jobapply.models import Credential, UserSite, utcnow
 from jobapply.pipeline.filters import SENIORITY_ORDER, UserFilters
 from jobapply.roles import all_fields
@@ -29,6 +38,19 @@ def site_kind(site: str) -> str:
 def connectable(site: str) -> bool:
     """Sites whose login is a cookie import (the assisted ones): they get Connect / Check controls."""
     return connect.is_site(site)
+
+
+def account_site(site: str) -> bool:
+    """Sites (Workday) where the apply run creates one candidate account per company with the profile email and a
+    generated password, verified through the Mailbox: no cookie upload, no re-login button."""
+    return site_kind(site) == "account"
+
+
+def account_counts(ctx: Ctx) -> dict[str, int]:
+    """`{site: number of companies with a stored account}` for the account sites (vault rows `workday:<tenant>`)."""
+    from jobapply.sites.workday.account import count_accounts
+
+    return {site: count_accounts(ctx.session, ctx.view.id) for site in SITE_DEFAULTS if account_site(site)}
 
 
 async def read_cookie_export(request: Request, form: dict) -> str:
@@ -69,6 +91,42 @@ def connect_user_site(ctx: Ctx, site: str, raw: str) -> tuple[bool, str]:
                    "Export the cookies again from a logged-in browser window and retry.")
 
 
+# ----------------------------------------------------------------- mailbox (shared with onboarding)
+
+MAILBOX_DOCS_URL = "https://github.com/sxi9/JOB-APPLY/blob/main/docs/MAILBOX.md"
+
+
+def mailbox_context(ctx: Ctx) -> dict:
+    """Template variables for the Mailbox card / onboarding step."""
+    return {
+        "mailbox": mailbox_status(ctx.session, ctx.view),
+        "mailbox_providers": MAILBOX_PROVIDERS,
+        "mailbox_chip": status_chip,
+        "mailbox_docs_url": MAILBOX_DOCS_URL,
+    }
+
+
+def save_mailbox_form(request: Request, ctx: Ctx, form: dict) -> bool:
+    """Save the posted mailbox form for the viewed user. Flashes the outcome; the app password is never
+    echoed back (not in the flash, not in the log). Returns True when saved."""
+    try:
+        settings = MailboxSettings.from_form(form)
+        save_mailbox(ctx.session, ctx.view, settings)
+    except (ValueError, VaultError) as exc:
+        flash(request, f"Mailbox not saved: {exc}", "error")
+        return False
+    flash(request, f"Mailbox saved for {settings.email} ({MAILBOX_PROVIDERS[settings.provider]['label']}). "
+                   "Run the connection test to make sure it works.")
+    return True
+
+
+def run_mailbox_test(request: Request, ctx: Ctx) -> bool:
+    """IMAP login + newest subject, SMTP login without sending; result stored on the profile and flashed."""
+    result = test_mailbox(ctx.session, ctx.view)
+    flash(request, result.summary(), "ok" if result.ok else "error")
+    return result.ok
+
+
 @router.get("/settings")
 def settings_page(ctx: Ctx = Depends(get_ctx)):
     creds = ctx.scope.all(Credential, order_by=Credential.site)
@@ -106,6 +164,8 @@ def settings_page(ctx: Ctx = Depends(get_ctx)):
         sites=ctx.scope.sites(),
         site_kind=site_kind,
         connectable=connectable,
+        account_site=account_site,
+        account_counts=account_counts(ctx),
         site_label=connect.label,
         creds=[c for c in creds if c.kind != "api_key"],
         mask=mask,
@@ -116,7 +176,31 @@ def settings_page(ctx: Ctx = Depends(get_ctx)):
         credential_kinds=CREDENTIAL_KINDS,
         providers=providers,
         live=get_settings().llm_backend != "fake",
+        **mailbox_context(ctx),
     )
+
+
+@router.post("/settings/mailbox")
+async def settings_mailbox_save(request: Request, ctx: Ctx = Depends(get_ctx)):
+    form = await read_form(request)
+    if save_mailbox_form(request, ctx, form) and str(form.get("action") or "") == "test":
+        run_mailbox_test(request, ctx)
+    return RedirectResponse("/settings#mailbox", status_code=303)
+
+
+@router.post("/settings/mailbox/test")
+async def settings_mailbox_test(request: Request, ctx: Ctx = Depends(get_ctx)):
+    await read_form(request)
+    run_mailbox_test(request, ctx)
+    return RedirectResponse("/settings#mailbox", status_code=303)
+
+
+@router.post("/settings/mailbox/delete")
+async def settings_mailbox_delete(request: Request, ctx: Ctx = Depends(get_ctx)):
+    await read_form(request)
+    gone = clear_mailbox(ctx.session, ctx.view)
+    flash(request, "Mailbox removed." if gone else "No mailbox was saved.")
+    return RedirectResponse("/settings#mailbox", status_code=303)
 
 
 @router.post("/settings/filters")

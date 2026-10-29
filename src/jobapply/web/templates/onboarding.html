@@ -112,6 +112,67 @@
     <button class="btn btn-primary">Save and continue</button>
   </form>
 
+{% elif step == 'mailbox' %}
+  <h2>Your mailbox (for codes and verification mail)</h2>
+  <p class="muted small">
+    Sites send a one-time code or a verification link when an account is created or a login is checked. With
+    your mailbox connected the worker can read that code itself instead of pausing on you. For Gmail you need
+    an <strong>app password</strong> (Google Account &rarr; Security &rarr; 2-Step Verification &rarr; App
+    passwords), never your account password. <a href="{{ mailbox_docs_url }}" target="_blank" rel="noopener">Step-by-step guide &#8599;</a>
+  </p>
+  <p>Status: <span class="chip chip-{{ mailbox_chip(mailbox.status) }}" id="mailbox-status">{{ mailbox.status | label }}</span>
+    {% if mailbox.configured %}<span class="mono small">{{ mailbox.email }}</span>{% endif %}
+    {% if mailbox.error %}<span class="muted small">&middot; {{ mailbox.error }}</span>{% endif %}
+    {% if mailbox.newest_subject %}<span class="muted small">&middot; newest: &ldquo;{{ mailbox.newest_subject }}&rdquo;</span>{% endif %}</p>
+  {% if not mailbox.vault_ready %}<p class="flash flash-error">The server has no vault key (<code>JOBAPPLY_VAULT_KEY</code>), so no password can be stored yet. You can skip this step.</p>{% endif %}
+  <form method="post" action="/onboarding/mailbox" id="mailbox-form" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="fields">
+      <div class="field"><label>Provider</label><select name="provider" id="mailbox-provider">
+        {% for key, p in mailbox_providers.items() %}<option value="{{ key }}" data-imap-host="{{ p.imap_host }}" data-imap-port="{{ p.imap_port }}" data-smtp-host="{{ p.smtp_host }}" data-smtp-port="{{ p.smtp_port }}" data-hint="{{ p.hint }}" {{ 'selected' if mailbox.provider == key }}>{{ p.label }}</option>{% endfor %}
+      </select></div>
+      <div class="field"><label>Email address</label><input type="email" name="email" value="{{ mailbox.email or profile.get('email', '') }}" placeholder="you@gmail.com" required autocomplete="off"></div>
+      <div class="field"><label>App password {% if mailbox.configured %}<span class="muted">(leave blank to keep the saved one)</span>{% endif %}</label><input type="password" name="password" autocomplete="new-password" placeholder="{{ 'saved, never shown' if mailbox.configured else '16-character app password' }}"></div>
+    </div>
+    <p class="muted small" id="mailbox-hint">{{ mailbox_providers[mailbox.provider].hint if mailbox.provider in mailbox_providers else '' }}</p>
+    <details {{ 'open' if mailbox.provider == 'custom' }}>
+      <summary class="muted small">Advanced: IMAP / SMTP hosts</summary>
+      <div class="fields" style="margin-top:8px">
+        <div class="field"><label>IMAP host</label><input type="text" name="imap_host" id="mailbox-imap-host" value="{{ mailbox.imap_host }}" placeholder="imap.gmail.com"></div>
+        <div class="field"><label>IMAP port</label><input type="number" name="imap_port" id="mailbox-imap-port" value="{{ mailbox.imap_port }}"></div>
+        <div class="field"><label>SMTP host</label><input type="text" name="smtp_host" id="mailbox-smtp-host" value="{{ mailbox.smtp_host }}" placeholder="smtp.gmail.com"></div>
+        <div class="field"><label>SMTP port</label><input type="number" name="smtp_port" id="mailbox-smtp-port" value="{{ mailbox.smtp_port }}"></div>
+      </div>
+    </details>
+    <div class="row" style="margin-top:8px">
+      <button class="btn btn-primary" name="action" value="test">Save and test</button>
+      <button class="btn">Save only</button>
+    </div>
+  </form>
+  <div class="row" style="margin-top:8px">
+    <form method="post" action="/onboarding/mailbox/test"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn" {{ 'disabled' if not mailbox.configured }}>Test connection</button></form>
+    <form method="post" action="/onboarding/mailbox/skip"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn">{{ 'Continue' if mailbox.configured else 'Skip for now' }}</button></form>
+  </div>
+  <p class="muted small">The test logs in over IMAP, reads only the subject of the newest message, then logs in over SMTP and disconnects. Nothing is sent, marked read or deleted. The password is encrypted at rest and never shown again; you can change or remove it later under Settings &rarr; Mailbox.</p>
+  <script>
+    (function () {
+      var sel = document.getElementById("mailbox-provider");
+      if (!sel) { return; }
+      var hint = document.getElementById("mailbox-hint");
+      var map = {imap_host: "mailbox-imap-host", imap_port: "mailbox-imap-port", smtp_host: "mailbox-smtp-host", smtp_port: "mailbox-smtp-port"};
+      sel.addEventListener("change", function () {
+        var o = sel.options[sel.selectedIndex];
+        Object.keys(map).forEach(function (k) {
+          var el = document.getElementById(map[k]);
+          if (el) { el.value = o.getAttribute("data-" + k.replace("_", "-")) || ""; }
+        });
+        if (hint) { hint.textContent = o.getAttribute("data-hint") || ""; }
+        var adv = sel.closest("form").querySelector("details");
+        if (adv) { adv.open = o.value === "custom"; }
+      });
+    })();
+  </script>
+
 {% elif step == 'linkedin' %}
   <h2>Connect your job sites (optional)</h2>
   <p class="muted small">

@@ -24,7 +24,14 @@ SITES: dict[str, dict] = {
     "cutshort": {"daily_cap": 15, "kind": "assisted"},
     "wellfound": {"daily_cap": 15, "kind": "assisted"},
     "email": {"daily_cap": 10, "kind": "email"},
+    # Synthetic site for apply links on hosts that are not a known ATS: the form navigator
+    # (forms/navigator.py) gets them. Caps and auto-submit are governed here, like an ATS.
+    "external": {"daily_cap": 10, "kind": "ats"},
 }
+# Account sites: no cookie import. The site package creates one candidate account per company (profile email +
+# a generated password kept in the vault) and confirms it from the user's mailbox. A job on such a host, wherever
+# it came from, is applied to by that package only, never by the generic form filler / navigator.
+ACCOUNT_SITES: tuple[str, ...] = tuple(site for site, cfg in SITES.items() if cfg["kind"] == "account")
 
 _ITERATIONS = 240_000
 

@@ -31,6 +31,7 @@ class MailboxConfig:
     port: int = 993
     ssl: bool = True
     folder: str = "INBOX"
+    timeout: float = 30.0  # socket timeout in seconds; a hung IMAP server must not hang the worker
 
 
 @dataclass
@@ -115,9 +116,17 @@ ClientFactory = Callable[[MailboxConfig], Any]
 
 
 def _default_client(cfg: MailboxConfig) -> Any:
-    client = imaplib.IMAP4_SSL(cfg.host, cfg.port) if cfg.ssl else imaplib.IMAP4(cfg.host, cfg.port)
+    timeout = cfg.timeout or None
+    if cfg.ssl:
+        client = imaplib.IMAP4_SSL(cfg.host, cfg.port, timeout=timeout)
+    else:
+        client = imaplib.IMAP4(cfg.host, cfg.port, timeout=timeout)
     client.login(cfg.username, cfg.password)
     return client
+
+
+def _as_utc(when: datetime) -> datetime:
+    return when.astimezone(UTC) if when.tzinfo else when.replace(tzinfo=UTC)
 
 
 class ImapReader:
@@ -140,18 +149,24 @@ class ImapReader:
             self._client = None
 
     def _search(self, criteria: list[str]) -> list[str]:
+        """Message numbers matching `criteria`, oldest first (servers return them ascending; sort to be sure)."""
         conn = self._conn()
         conn.select(self.cfg.folder)
         status, data = conn.search(None, *criteria)
         if status != "OK" or not data or not data[0]:
             return []
-        return [u.decode() if isinstance(u, bytes) else str(u) for u in data[0].split()]
+        uids = [u.decode() if isinstance(u, bytes) else str(u) for u in data[0].split()]
+        return sorted(uids, key=lambda u: int(u) if u.isdigit() else 0)
 
-    def fetch(self, uids: list[str]) -> list[Mail]:
+    def fetch(self, uids: list[str], headers_only: bool = False) -> list[Mail]:
+        """Parse the given messages. Always BODY.PEEK, so reading never sets \\Seen: an OTP poll must not mark
+        the user's newest mails as read (`mark_seen` is the only explicit flag write). `headers_only` fetches
+        just the header block: enough for sender / subject / date, used by the connection test."""
         conn = self._conn()
+        what = "(BODY.PEEK[HEADER])" if headers_only else "(BODY.PEEK[])"
         out: list[Mail] = []
         for uid in uids:
-            status, data = conn.fetch(uid, "(RFC822)")
+            status, data = conn.fetch(uid, what)
             if status != "OK" or not data or not isinstance(data[0], tuple):
                 continue
             try:
@@ -161,14 +176,26 @@ class ImapReader:
         return out
 
     def recent(self, since: datetime | None = None, limit: int = 100, unseen_only: bool = False) -> list[Mail]:
+        """The newest `limit` mails (optionally only unseen, optionally not older than `since`), oldest first.
+
+        IMAP SINCE is a whole-day criterion in the server's idea of a day, so the server search is only a
+        coarse pre-filter; the exact cut-off is applied on the parsed Date header (with 5 minutes of slack
+        for clock skew)."""
         criteria = ["UNSEEN"] if unseen_only else ["ALL"]
         if since is not None:
-            criteria += ["SINCE", since.strftime("%d-%b-%Y")]
+            since = _as_utc(since)
+            criteria += ["SINCE", (since - timedelta(days=1)).strftime("%d-%b-%Y")]
         uids = self._search(criteria)[-limit:]
         mails = self.fetch(uids)
         if since is not None:
             mails = [m for m in mails if m.received_at >= since - timedelta(minutes=5)]
-        return sorted(mails, key=lambda m: m.received_at)
+        return sorted(mails, key=lambda m: (m.received_at, int(m.uid) if m.uid.isdigit() else 0))
+
+    def newest(self, limit: int = 1) -> list[Mail]:
+        """Header-only view of the newest `limit` messages, newest first. Reads nothing but the headers."""
+        uids = self._search(["ALL"])[-limit:]
+        mails = self.fetch(uids, headers_only=True)
+        return sorted(mails, key=lambda m: (m.received_at, int(m.uid) if m.uid.isdigit() else 0), reverse=True)
 
     def mark_seen(self, uids: list[str]) -> None:
         conn = self._conn()
@@ -178,16 +205,33 @@ class ImapReader:
     def wait_for(
         self, predicate: Callable[[Mail], bool], timeout: float = 120, poll: float = 5, since: datetime | None = None
     ) -> Mail | None:
-        """Poll until a mail matching `predicate` arrives (OTP codes, verification links)."""
+        """Poll until a mail matching `predicate` arrives (OTP codes, verification links). Newest mail is
+        tried first on every poll. A transient IMAP error drops the connection and retries on the next
+        poll instead of raising; the deadline still holds. A login the server refuses (wrong or revoked app
+        password: `imaplib.IMAP4.error` while connecting) is raised at once instead of being retried on
+        every poll, so a bad mailbox never turns into a burst of failed logins."""
         deadline = time.monotonic() + timeout
-        since = since or datetime.now(UTC) - timedelta(minutes=10)
+        since = _as_utc(since) if since else datetime.now(UTC) - timedelta(minutes=10)
         while True:
-            for m in reversed(self.recent(since=since, limit=30)):
-                if predicate(m):
-                    return m
+            connecting = self._client is None
+            try:
+                self._conn()
+                connecting = False
+                for m in reversed(self.recent(since=since, limit=30)):
+                    if predicate(m):
+                        return m
+            except imaplib.IMAP4.error as exc:
+                if connecting:
+                    self.close()
+                    raise  # the login itself was refused: polling again cannot fix it
+                log.warning("imap poll failed, retrying", error=str(exc)[:200])
+                self.close()
+            except OSError as exc:
+                log.warning("imap poll failed, retrying", error=str(exc)[:200])
+                self.close()
             if time.monotonic() >= deadline:
                 return None
-            time.sleep(poll)
+            time.sleep(min(poll, max(0.01, deadline - time.monotonic())))
 
 
 def sender_matches(mail: Mail, pattern: str) -> bool:

@@ -29,7 +29,9 @@ from jobapply.config import Settings, get_settings
 from jobapply.models import Application, AppStatus, Job, User, UserSite
 from jobapply.pipeline import apply as apply_mod
 from jobapply.pipeline.apply import (
+    ACCOUNT_SITES,
     ASSISTED_SITES,
+    COOKIE_SITES,
     SITE_APPLIERS,
     apply_assisted,
     apply_assisted_user,
@@ -47,6 +49,7 @@ SITE_URLS = {
     "instahyre": "https://www.instahyre.com/job-12345-python-developer-at-acme/",
     "cutshort": "https://cutshort.io/job/Python-Developer-Acme-koBBDTQ1",
     "wellfound": "https://wellfound.com/jobs/1053169-python-developer",
+    "workday": "https://acme.wd5.myworkdayjobs.com/Careers/job/Bengaluru/Python-Developer_JR1",
 }
 
 
@@ -54,9 +57,11 @@ SITE_URLS = {
 
 
 def test_assisted_sites_are_registered_everywhere():
-    assert set(SITE_APPLIERS) == set(ASSISTED_COLLECTORS) == set(ASSISTED_COOLDOWN_KEYS) == set(SITE_URLS)
+    assert set(COOKIE_SITES) == set(ASSISTED_COLLECTORS) == set(ASSISTED_COOLDOWN_KEYS)
+    assert set(SITE_APPLIERS) == set(COOKIE_SITES) | set(ACCOUNT_SITES) == set(SITE_URLS)
     assert set(SITE_APPLIERS) <= ASSISTED_SITES and "linkedin" in ASSISTED_SITES
-    assert set(SITE_APPLIERS) <= set(connect.VERIFIED_SITES)
+    assert set(COOKIE_SITES) <= set(connect.VERIFIED_SITES)
+    assert ACCOUNT_SITES == ("workday",) and not any(connect.is_site(s) for s in ACCOUNT_SITES)
 
 
 def test_registry_builds_only_enabled_assisted_sites():
@@ -642,13 +647,15 @@ def _fake_connect(monkeypatch, status="ok", count=5):
 def test_settings_page_lists_connect_controls(client):
     _login(client)
     page = client.get("/settings").text
-    for site in SITE_APPLIERS:
+    for site in COOKIE_SITES:
         assert f"/settings/sites/{site}/cookies" in page and f"/settings/sites/{site}/check" in page
     assert "/settings/sites/linkedin/cookies" in page
     assert "/settings/sites/greenhouse/cookies" not in page
+    for site in ACCOUNT_SITES:  # account sites: no cookie upload, no re-login button
+        assert f"/settings/sites/{site}/cookies" not in page and f"/settings/sites/{site}/relogin" not in page
 
 
-@pytest.mark.parametrize("site", SITE_APPLIERS)
+@pytest.mark.parametrize("site", COOKIE_SITES)
 def test_settings_connect_site_imports_checks_and_records(client, engine, monkeypatch, site):
     calls = _fake_connect(monkeypatch)
     csrf = _login(client)

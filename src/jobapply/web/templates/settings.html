@@ -60,21 +60,86 @@
       <td><input type="checkbox" name="enabled__{{ s.site }}" value="1" {{ 'checked' if s.enabled }}></td>
       <td><input type="checkbox" name="auto__{{ s.site }}" value="1" {{ 'checked' if s.auto_submit }}></td>
       <td><input type="number" name="cap__{{ s.site }}" value="{{ s.daily_cap }}" min="0" style="width:80px"></td>
-      <td class="small">{% if s.login_status == 'n/a' %}<span class="muted">no login needed</span>{% else %}
+      <td class="small">{% if account_site(s.site) %}
+        <span class="muted" id="account-site-{{ s.site }}">account per company, created automatically; needs Mailbox</span>
+        {% if s.login_status == 'challenge' %}<span class="chip chip-red">{{ s.login_status | label }}</span>{% endif %}
+        <div><span class="chip chip-{{ 'green' if account_counts.get(s.site, 0) else 'gray' }}">{{ account_counts.get(s.site, 0) }} company account{{ '' if account_counts.get(s.site, 0) == 1 else 's' }}</span>
+        {% if mailbox.configured %}<span class="chip chip-{{ mailbox_chip(mailbox.status) }}">mailbox {{ mailbox.status | label }}</span>{% else %}<a class="chip chip-amber" href="#mailbox">set up the Mailbox first</a>{% endif %}</div>
+        {% elif s.login_status == 'n/a' %}<span class="muted">no login needed</span>{% else %}
         <span class="chip chip-{{ 'green' if s.login_status == 'ok' else 'amber' if s.login_status == 'unknown' else 'red' }}">{{ s.login_status | label }}</span>
         {% if connectable(s.site) %}<button class="btn btn-sm" formaction="/settings/sites/{{ s.site }}/check">Check</button>
         {% else %}<button class="btn btn-sm" formaction="/settings/sites/{{ s.site }}/relogin">Re-login</button>{% endif %}{% endif %}</td>
       <td class="small">{% if connectable(s.site) %}
         <input type="file" name="file" accept=".json,application/json" style="max-width:180px">
         <button class="btn btn-sm" formaction="/settings/sites/{{ s.site }}/cookies" formenctype="multipart/form-data">Connect {{ site_label(s.site) }}</button>
+        {% elif account_site(s.site) %}<span class="muted">no cookies: <code>jobapply sites check -s {{ s.site }}</code></span>
         {% else %}<span class="muted">—</span>{% endif %}</td>
     </tr>
     {% endfor %}
   </table></div>
   <p class="muted small">Auto-submit stays off until a few dry runs on that site look right in the Queue. The global dry-run switch on the Admin page overrides everything.</p>
   <p class="muted small"><strong>Connect</strong> (LinkedIn, Naukri, Instahyre, Cutshort, Wellfound): export that site's cookies from your own logged-in browser with a cookie-export extension (the usual <code>cookies.json</code> array) and upload the file here. It is stored only in your private browser profile on this server, never in the repo; nothing types your password. <strong>Check</strong> opens the site headless with the saved profile and refreshes the Login column (ok / expired / challenge). A <em>challenge</em> means the site wants a captcha or OTP: finish it in your own browser, export again, re-connect.</p>
+  <p class="muted small"><strong>Workday</strong> (account site): nothing to upload. Each company's career site wants its own candidate account, so a real apply run creates one with your profile email and a password it generates and keeps encrypted (never your mailbox password), confirms it with the code or link from your <a href="#mailbox">Mailbox</a>, then walks the application wizard. A dry run never creates an account. <strong>external</strong> covers apply links on hosts that are not a known ATS: the form navigator finds the form (cookie banners, Apply buttons, popups, wizards) and may create an account there the same way, only when the global dry run is off and auto-submit is on for it.</p>
   <button class="btn btn-primary">Save sites</button>
 </form>
+
+<section class="card" id="mailbox" style="margin-top:16px">
+  <h2>Mailbox</h2>
+  <p class="muted small">The inbox the apply worker watches for one-time codes and verification links, and the inbox the Inbox page syncs. For Gmail this needs an <strong>app password</strong>, not your account password: Google Account &rarr; Security &rarr; 2-Step Verification &rarr; App passwords. <a href="{{ mailbox_docs_url }}" target="_blank" rel="noopener">How to create one &#8599;</a></p>
+  <p>Status: <span class="chip chip-{{ mailbox_chip(mailbox.status) }}" id="mailbox-status">{{ mailbox.status | label }}</span>
+    {% if mailbox.configured %}<span class="mono small">{{ mailbox.email }}</span> <span class="muted small">via {{ mailbox.imap_host }}</span>{% endif %}
+    {% if mailbox.last_test_at %}<span class="muted small">&middot; last test {{ mailbox.last_test_at[:16].replace('T', ' ') }} UTC</span>{% endif %}
+    {% if mailbox.error %}<span class="muted small">&middot; {{ mailbox.error }}</span>{% endif %}
+    {% if mailbox.newest_subject %}<span class="muted small">&middot; newest: &ldquo;{{ mailbox.newest_subject }}&rdquo;</span>{% endif %}</p>
+  {% if not mailbox.vault_ready %}<p class="flash flash-error">The server has no vault key (<code>JOBAPPLY_VAULT_KEY</code>), so no password can be stored yet.</p>{% endif %}
+  <form method="post" action="/settings/mailbox" id="mailbox-form" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="fields">
+      <div class="field"><label>Provider</label><select name="provider" id="mailbox-provider">
+        {% for key, p in mailbox_providers.items() %}<option value="{{ key }}" data-imap-host="{{ p.imap_host }}" data-imap-port="{{ p.imap_port }}" data-smtp-host="{{ p.smtp_host }}" data-smtp-port="{{ p.smtp_port }}" data-hint="{{ p.hint }}" {{ 'selected' if mailbox.provider == key }}>{{ p.label }}</option>{% endfor %}
+      </select></div>
+      <div class="field"><label>Email address</label><input type="email" name="email" value="{{ mailbox.email }}" placeholder="you@gmail.com" required autocomplete="off"></div>
+      <div class="field"><label>App password {% if mailbox.configured %}<span class="muted">(leave blank to keep the saved one)</span>{% endif %}</label><input type="password" name="password" autocomplete="new-password" placeholder="{{ 'saved, never shown' if mailbox.configured else '16-character app password' }}"></div>
+    </div>
+    <p class="muted small" id="mailbox-hint">{{ mailbox_providers[mailbox.provider].hint if mailbox.provider in mailbox_providers else '' }}</p>
+    <details {{ 'open' if mailbox.provider == 'custom' }}>
+      <summary class="muted small">Advanced: IMAP / SMTP hosts</summary>
+      <div class="fields" style="margin-top:8px">
+        <div class="field"><label>IMAP host</label><input type="text" name="imap_host" id="mailbox-imap-host" value="{{ mailbox.imap_host }}" placeholder="imap.gmail.com"></div>
+        <div class="field"><label>IMAP port</label><input type="number" name="imap_port" id="mailbox-imap-port" value="{{ mailbox.imap_port }}"></div>
+        <div class="field"><label>SMTP host</label><input type="text" name="smtp_host" id="mailbox-smtp-host" value="{{ mailbox.smtp_host }}" placeholder="smtp.gmail.com"></div>
+        <div class="field"><label>SMTP port</label><input type="number" name="smtp_port" id="mailbox-smtp-port" value="{{ mailbox.smtp_port }}"></div>
+      </div>
+    </details>
+    <div class="row" style="margin-top:8px">
+      <button class="btn btn-primary">Save mailbox</button>
+      <button class="btn" name="action" value="test">Save and test</button>
+    </div>
+  </form>
+  <div class="row" style="margin-top:8px">
+    <form method="post" action="/settings/mailbox/test"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn" {{ 'disabled' if not mailbox.configured }}>Test connection</button></form>
+    {% if mailbox.configured %}<form method="post" action="/settings/mailbox/delete"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sm btn-danger">Remove mailbox</button></form>{% endif %}
+  </div>
+  <p class="muted small">The test logs in over IMAP, reads only the subject line of the newest message, then logs in over SMTP and disconnects. Nothing is sent, moved, marked read or deleted. The password is encrypted with the server vault key and is never shown again.</p>
+  <script>
+    (function () {
+      var sel = document.getElementById("mailbox-provider");
+      if (!sel) { return; }
+      var hint = document.getElementById("mailbox-hint");
+      var map = {imap_host: "mailbox-imap-host", imap_port: "mailbox-imap-port", smtp_host: "mailbox-smtp-host", smtp_port: "mailbox-smtp-port"};
+      sel.addEventListener("change", function () {
+        var o = sel.options[sel.selectedIndex];
+        Object.keys(map).forEach(function (k) {
+          var el = document.getElementById(map[k]);
+          if (el) { el.value = o.getAttribute("data-" + k.replace("_", "-")) || ""; }
+        });
+        if (hint) { hint.textContent = o.getAttribute("data-hint") || ""; }
+        var adv = sel.closest("form").querySelector("details");
+        if (adv) { adv.open = o.value === "custom"; }
+      });
+    })();
+  </script>
+</section>
 
 <section class="card" id="credentials" style="margin-top:16px">
   <h2>Credentials</h2>

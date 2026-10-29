@@ -32,17 +32,27 @@ from jobapply.models import Application, AppStatus, Job, JobSource, User, UserSi
 from jobapply.notify import notify
 from jobapply.repo import UserScope
 from jobapply.switches import global_dry_run, kill_switch_on
+from jobapply.users import ACCOUNT_SITES
+from jobapply.users import SITES as SITE_DEFAULTS
 
 log = get_logger(__name__)
+
+# Synthetic site key for apply links on hosts that are not a known ATS. The navigator path
+# (forms/navigator.py via FormRunner) handles them; this UserSite row carries their daily cap and auto-submit.
+EXTERNAL_SITE = "external"
+EMAIL_SITE = "email"
 
 APPLY_STATUSES = (AppStatus.approved, AppStatus.queued)
 # Sites with their own filler running inside the user's logged-in browser profile. `apply_user` leaves these
 # alone: LinkedIn goes through `jobapply linkedin apply` (`sites.linkedin.easy_apply`), the others through
 # `apply_assisted` below (`jobapply sites apply -s <site>`), which dispatches to `sites.<site>.apply.apply_job`.
-ASSISTED_SITES = {"linkedin", "naukri", "instahyre", "cutshort", "wellfound"}
+ASSISTED_SITES = {"linkedin", "naukri", "instahyre", "cutshort", "wellfound", *ACCOUNT_SITES}
 # Sites whose package exposes the uniform `apply_job(session, application, *, dry_run, auto_submit)`,
-# `pick_<site>_applications`, `<Site>Session.check(page)` and `throttled(user, site)` interface.
-SITE_APPLIERS = ("naukri", "instahyre", "cutshort", "wellfound")
+# `pick_<site>_applications`, `<Site>Session.check(page)` and `throttled(user, site)` interface. Workday is the
+# account site among them (`users.ACCOUNT_SITES`): no cookie import, its package creates the per-company
+# account; `COOKIE_SITES` are the ones connected through a cookie export (`sites.connect`).
+SITE_APPLIERS = ("naukri", "instahyre", "cutshort", "wellfound", *ACCOUNT_SITES)
+COOKIE_SITES = tuple(s for s in SITE_APPLIERS if s not in ACCOUNT_SITES)
 
 
 @dataclass
@@ -54,6 +64,31 @@ class ApplyOutcome:
 
 def site_for_job(job: Job) -> str:
     return job.ats_type or ("email" if job.apply_url.startswith("mailto:") else job.source)
+
+
+def account_site_of(job: Job) -> str | None:
+    """The account site (`workday`) that owns this job: by `ats_type`, else by the apply URL's host
+    (`detect_from_url` wins over whatever the source said), else None."""
+    if job.ats_type in ACCOUNT_SITES:
+        return job.ats_type
+    hit = detect_from_url(job.apply_url or job.url or "")
+    return hit.ats if hit is not None and hit.ats in ACCOUNT_SITES else None
+
+
+def hand_to_account_site(session: Session, user: User, app: Application, job: Job, site: str, *,
+                         origin: str) -> ApplyOutcome:
+    """A job on an account site's host, met on a generic path: stamp `ats_type`, leave the application where it is
+    (approved / queued) and record that the site's own applier owns it. `apply_assisted_user(..., site)`
+    (`jobapply sites apply -s <site>`) picks it up with the full gate stack; the generic FormRunner / navigator
+    never touches it, so no generic sign-up can run on a Workday tenant."""
+    if job.ats_type != site:
+        job.ats_type = site
+        session.add(job)
+        session.flush()
+    detail = f"{origin}: {site} job handed to the {site} applier (jobapply sites apply -s {site})"
+    UserScope(session, user).set_status(app, app.status, detail)
+    log.info("job handed to the account site applier", user=user.username, job=job.id, site=site, origin=origin)
+    return ApplyOutcome(app.id, app.status, detail)
 
 
 def applied_today(session: Session, user_id: int, site: str | None = None) -> int:
@@ -87,9 +122,9 @@ def pick_applications(session: Session, user: User, limit: int) -> list[tuple[Ap
         site = sites.get(site_key)
         if site is None or not site.enabled:
             continue
-        if not job.apply_url or job.apply_url.startswith("mailto:"):
+        if not job.apply_url:
             continue
-        out.append((app, job, site))
+        out.append((app, job, site))  # a mailto: apply link rides along under the "email" site
         if len(out) >= limit:
             break
     if skipped_assisted:
@@ -151,23 +186,145 @@ def run_one(
     session: Session, user: User, app: Application, job: Job, site: UserSite, page, llm: LLM | None, dry_run: bool
 ) -> ApplyOutcome:
     s = get_settings()
-    vault = vault_view_for(user, app)
-    answers = AnswerSource(session, llm, user, job, message=app.message or "")
-    runner = FormRunner(session, vault, answers=answers, llm=llm, user=user)
-    shot = s.screenshots_dir / str(user.id) / f"{app.id}-{utcnow().strftime('%Y%m%d%H%M%S')}.png"
     submit = (
         not dry_run
         and site.auto_submit
         and app.status == AppStatus.approved
         or (not dry_run and site.auto_submit and app.status == AppStatus.queued)
     )
+    if (job.apply_url or "").lower().startswith("mailto:"):
+        return apply_by_email(session, user, app, job, llm, dry_run=dry_run, auto_submit=bool(site.auto_submit))
+    owner = account_site_of(job)
+    if owner:
+        return hand_to_account_site(session, user, app, job, owner, origin=site.site)
+    vault = vault_view_for(user, app)
+    answers = AnswerSource(session, llm, user, job, message=app.message or "")
+    runner = FormRunner(session, vault, answers=answers, llm=llm, user=user)
+    shot = s.screenshots_dir / str(user.id) / f"{app.id}-{utcnow().strftime('%Y%m%d%H%M%S')}.png"
     try:
         result: FillResult = runner.run(
             page, url=job.apply_url, ats_hint=job.ats_type, submit=submit, screenshot_path=shot
         )
     except Exception as exc:  # browser errors: timeouts, navigation failures
         return record_outcome(session, user, app, job, None, error=f"{type(exc).__name__}: {exc}")
+    if result.mailto:
+        # The navigator found that the "Apply" control is a mailto: link: apply by email instead.
+        job.apply_url = result.mailto
+        session.add(job)
+        email_site = UserScope(session, user).site(EMAIL_SITE)
+        return apply_by_email(session, user, app, job, llm, dry_run=dry_run,
+                              auto_submit=bool(email_site is not None and email_site.enabled
+                                               and email_site.auto_submit))
     return record_outcome(session, user, app, job, result)
+
+
+# --------------------------------------------------------------------------- apply by email (mailto: links)
+
+
+def parse_mailto(url: str) -> tuple[str, str, str]:
+    """`(address, subject, body)` from a mailto: link. Only the first address is used."""
+    from urllib.parse import parse_qs, unquote, urlparse
+
+    raw = str(url or "").strip()
+    if not raw.lower().startswith("mailto:"):
+        return "", "", ""
+    parsed = urlparse(raw)
+    addr = unquote(parsed.path or "").split(",")[0].strip()
+    q = parse_qs(parsed.query or "")
+    if not addr and q.get("to"):
+        addr = q["to"][0].strip()
+    subject = (q.get("subject") or [""])[0].strip()
+    body = (q.get("body") or [""])[0].strip()
+    return addr, subject, body
+
+
+def _email_plan(to: str, subject: str, body: str, resume: Path | None, draft: Path | None = None) -> list[PlannedFill]:
+    rows = [("To", to, "text"), ("Subject", subject, "text"), ("Body", body, "text")]
+    if resume is not None:
+        rows.append(("Resume", str(resume), "file"))
+    if draft is not None:
+        rows.append(("Draft", str(draft), "text"))
+    out = []
+    for i, (label, value, kind) in enumerate(rows):
+        f = FormField(i, f"email:{label.lower()}", "input", "textarea", label=label)
+        out.append(PlannedFill(f, f"const:{label.lower()}", value, kind, "builtin", 100, done=True))
+    return out
+
+
+def apply_by_email(
+    session: Session, user: User, app: Application, job: Job, llm: LLM | None, *, dry_run: bool,
+    auto_submit: bool, smtp_factory=None,
+) -> ApplyOutcome:
+    """Apply to a job whose apply link is `mailto:`: the tailored resume attached, `ai.service.application_message`
+    (template without an LLM) as the body. The mail is SENT only when `dry_run` is False AND `auto_submit` is
+    on (the "email" site's flag) AND the user's mailbox has SMTP settings; every other case writes the full
+    draft as an `.eml` under data/screenshots/<user_id>/ and pauses the application for review."""
+    from jobapply.ai.service import application_message
+    from jobapply.mail.inbox import mailbox_configs
+    from jobapply.mail.smtp import SmtpConfig, SmtpSender
+
+    s = get_settings()
+    profile = dict(user.profile or {})
+    name = f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip() or user.username
+    to, subject, preset_body = parse_mailto(job.apply_url)
+    if not to:
+        return record_outcome(session, user, app, job, FillResult(
+            url=job.apply_url, profile_origin="email", paused_reason="apply by email: the mailto link has no address"))
+    job.ats_type = EMAIL_SITE  # so the per-site cap (applied_today(site="email")) counts this application
+    session.add(job)
+    subject = subject or f"Application for {job.title} at {job.company} - {name}"
+    note = application_message(session, llm, user, job, app)
+    contact = [str(profile.get(k) or "") for k in ("phone", "linkedin") if profile.get(k)]
+    body = "\n".join(filter(None, [
+        "Hello,", "", preset_body, note, "", "My resume is attached; I would be glad to share anything else.",
+        "", "Best regards,", name, *contact,
+    ]))
+    resume = Path(app.resume_variant) if app.resume_variant and Path(app.resume_variant).exists() else None
+    if resume is None:
+        resume = Path(vault_view_for(user, app).resume_path or "")
+        resume = resume if str(resume) and resume.exists() else None
+    attachments = [resume] if resume is not None else []
+    _imap_cfg, smtp_cfg = mailbox_configs(session, user)
+    from_addr = str(profile.get("email") or user.email or "")
+    stamp = utcnow().strftime("%Y%m%d%H%M%S")
+    if dry_run or not auto_submit:
+        cfg = smtp_cfg or SmtpConfig(host="", username=from_addr, password="", from_name=name)
+        msg = SmtpSender(cfg).build(to, subject, body, attachments=attachments)
+        draft = s.screenshots_dir / str(user.id) / f"{app.id}-{stamp}.eml"
+        draft.parent.mkdir(parents=True, exist_ok=True)
+        draft.write_bytes(msg.as_bytes())
+        why = "dry run" if dry_run else "auto-submit off for email"
+        result = FillResult(url=job.apply_url, profile_origin="email",
+                            paused_reason=f"email draft written for review ({why}): {draft.name}",
+                            plan=_email_plan(to, subject, body, resume, draft))
+        log.info("application email drafted, not sent", user=user.username, job=job.id, to=to, draft=str(draft))
+        return record_outcome(session, user, app, job, result)
+    if smtp_cfg is None:
+        return record_outcome(session, user, app, job, FillResult(
+            url=job.apply_url, profile_origin="email",
+            paused_reason="mailbox not configured: add the mailbox (imap/smtp) credential to send application emails"))
+    try:
+        SmtpSender(smtp_cfg, client_factory=smtp_factory).send(to, subject, body, attachments=attachments)
+    except Exception as exc:  # noqa: BLE001 - SMTP refused / network
+        return record_outcome(session, user, app, job, None, error=f"email send failed: {type(exc).__name__}: {exc}")
+    result = FillResult(url=job.apply_url, profile_origin="email", submitted=True,
+                        plan=_email_plan(to, subject, body, resume))
+    log.info("application email sent", user=user.username, job=job.id, to=to)
+    return record_outcome(session, user, app, job, result)
+
+
+def external_site(session: Session, user: User) -> UserSite:
+    """The user's `external` UserSite row (caps / auto-submit for unknown hosts), created from the SITE
+    defaults for accounts that predate it."""
+    scope = UserScope(session, user)
+    row = scope.site(EXTERNAL_SITE)
+    if row is None:
+        cfg = SITE_DEFAULTS[EXTERNAL_SITE]
+        row = UserSite(user_id=user.id, site=EXTERNAL_SITE, daily_cap=cfg["daily_cap"], enabled=True,
+                       login_status="n/a")
+        session.add(row)
+        session.flush()
+    return row
 
 
 def apply_user(
@@ -325,9 +482,16 @@ def _run_resolved_external(
     session: Session, user: User, app: Application, job: Job, gov_site: UserSite | None,
     page, llm: LLM | None, dry_run: bool
 ) -> ApplyOutcome:
-    """Run the FormRunner on a LinkedIn job whose apply_url/ats_type have just been resolved to an ATS or
-    other external site. A host with no fillable form is paused (apply manually), not failed, so it is not
-    retried."""
+    """Run the FormRunner on a job whose apply_url/ats_type have just been resolved to an ATS or any other
+    external site. An unknown host goes through the navigator (`gov_site` is then the synthetic `external`
+    site, see `external_site`); a page where no form can be reached is paused with the navigator's reason
+    (captcha, account wall, no form after N hops), not failed, so it is not retried blindly. A mailto: apply
+    link the navigator finds is applied to by email. A host owned by an account site (a Workday tenant) is
+    handed to that site's applier instead: the navigator's generic sign-up never runs there."""
+    owner = account_site_of(job)
+    if owner:
+        return hand_to_account_site(session, user, app, job, owner,
+                                    origin=gov_site.site if gov_site is not None else "resolved")
     s = get_settings()
     vault = vault_view_for(user, app)
     answers = AnswerSource(session, llm, user, job, message=app.message or "")
@@ -342,6 +506,13 @@ def _run_resolved_external(
         )
     except Exception as exc:  # browser errors: timeouts, navigation failures
         return record_outcome(session, user, app, job, None, error=f"{type(exc).__name__}: {exc}")
+    if result.mailto:
+        job.apply_url = result.mailto
+        session.add(job)
+        email_site = UserScope(session, user).site(EMAIL_SITE)
+        return apply_by_email(session, user, app, job, llm, dry_run=dry_run,
+                              auto_submit=bool(email_site is not None and email_site.enabled
+                                               and email_site.auto_submit))
     if not result.plan and not result.submitted and result.error == NO_FORM_ERROR:
         result.error = ""
         result.paused_reason = "no application form found on the company site: apply manually"
@@ -424,7 +595,9 @@ def apply_external_linkedin_user(
             job.ats_type = resolution.ats_type
             session.add(job)
             session.flush()
-            gov_site = scope.site(resolution.ats_type) if resolution.ats_type else None
+            # A known ATS is governed by its own site row; any other host by the synthetic `external` site,
+            # and the navigator finds its form (no more "apply manually" for unknown hosts).
+            gov_site = scope.site(resolution.ats_type) if resolution.ats_type else external_site(session, user)
             # Per-site daily cap: once the resolved site is at its cap, fill for review (dry run) instead of
             # submitting for real, so this path cannot exceed site.daily_cap. The per-user cap is checked at
             # the top of the loop. Mirrors apply_user's cap handling (lines 174-185).
@@ -630,9 +803,10 @@ def route_external_result(
     context=None, llm: LLM | None = None, dry_run: bool = True,
 ) -> ApplyOutcome | None:
     """A site answered "apply on the company site": write the resolved URL / ATS onto the job and send it
-    down the resolved-ATS path (`_run_resolved_external`, the LinkedIn offsite flow) when the host is a known
-    ATS and a browser context is at hand; otherwise leave it queued for the ATS filler (known ATS, no context)
-    or pause it for a human (unknown host, or a URL only revealed by a click that was not made)."""
+    down the resolved-site path (`_run_resolved_external`, the LinkedIn offsite flow) when a browser context
+    is at hand: a known ATS under its own site row, any other host under the synthetic `external` site with the
+    navigator finding the form. Without a context a known ATS is left queued for the ATS filler, and an
+    unknown host (or a URL only revealed by a click that was not made) is paused for a human."""
     url = str(result.get("apply_url") or "")
     ats = result.get("ats_type")
     if url and not ats:
@@ -644,7 +818,14 @@ def route_external_result(
         session.add(job)
         session.flush()
     scope = UserScope(session, user)
+    if url and ats in ACCOUNT_SITES:
+        # A Workday tenant: never the FormRunner / navigator. Its own applier (jobapply sites apply -s workday)
+        # creates the per-company account and walks the wizard under the same gate stack as this run.
+        hand_to_account_site(session, user, app, job, ats, origin=site)
+        return None
     gov_site = scope.site(ats) if ats and ats not in ASSISTED_SITES else None
+    if url and gov_site is None and not ats and context is not None:
+        gov_site = external_site(session, user)  # unknown host: the navigator path
     if url and gov_site is not None:
         if context is not None:
             site_capped = (not dry_run and applied_today(session, user.id, gov_site.site) >= gov_site.daily_cap)
@@ -715,9 +896,13 @@ def apply_assisted_user(
             log.warning("session state unclear, retry later", user=user.username, site=site)
             return []
         if status != "ok":
-            hint = f"export {site} cookies from a logged-in browser and import them (Settings -> Sites)"
-            msg = (f"{site} is showing a security check / OTP: complete it in your browser, then {hint}"
-                   if status == "challenge" else f"{site} login needed ({status}): {hint}")
+            if site in ACCOUNT_SITES:
+                msg = (f"{site} is in a challenge cooldown ({status}); the run is retried after it ends "
+                       "(accounts are created per company, nothing to import)")
+            else:
+                hint = f"export {site} cookies from a logged-in browser and import them (Settings -> Sites)"
+                msg = (f"{site} is showing a security check / OTP: complete it in your browser, then {hint}"
+                       if status == "challenge" else f"{site} login needed ({status}): {hint}")
             _notify_safe(session, user, "paused", msg)
             log.warning("session not ok", user=user.username, site=site, status=status)
             return []
@@ -784,6 +969,12 @@ def apply_assisted_user(
                              f"{site} session expired mid-run: re-import the cookies for {user.username}")
                 log.warning("session expired mid-run, stopping", user=user.username, site=site)
                 break
+            if result.get("stop_run"):
+                # A per-user problem every job of this run would hit the same way (Workday: mailbox / vault not
+                # configured, no profile email): book this one, alert once, stop; never loop over the queue.
+                _notify_safe(session, user, "paused", f"{site} run stopped: {result.get('reason')}")
+                log.warning("run stopped by the site", user=user.username, site=site, reason=result.get("reason"))
+                break
     finally:
         try:
             context.close()
@@ -843,6 +1034,8 @@ def apply_assisted_all(
 
 
 __all__ = ["apply_all", "apply_user", "run_one", "record_outcome", "pick_applications", "ASSISTED_SITES",
-           "SITE_APPLIERS", "apply_external_linkedin", "apply_external_linkedin_user",
+           "SITE_APPLIERS", "ACCOUNT_SITES", "COOKIE_SITES", "account_site_of", "hand_to_account_site",
+           "apply_external_linkedin", "apply_external_linkedin_user",
            "pick_external_linkedin_applications", "apply_assisted", "apply_assisted_user", "apply_assisted_all",
-           "fill_result_from", "route_external_result", "stop_reason_for", "site_active_hours", "Path"]
+           "fill_result_from", "route_external_result", "stop_reason_for", "site_active_hours", "Path",
+           "apply_by_email", "parse_mailto", "external_site", "EXTERNAL_SITE", "EMAIL_SITE"]
