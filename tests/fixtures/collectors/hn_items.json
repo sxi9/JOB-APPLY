@@ -1,0 +1,56 @@
+{
+ "author": "whoishiring",
+ "children": [
+  {
+   "author": "mwest1066",
+   "created_at": "2026-10-01T15:02:37.000Z",
+   "created_at_i": 1790866957,
+   "id": 49922584,
+   "parent_id": 49922569,
+   "text": "PrairieLearn (Remote US) — Full-Stack Software Engineer — TypeScript &#x2F; Postgres &#x2F; React &#x2F; AI<p>PrairieLearn (<a href=\"https:&#x2F;&#x2F;www.prairielearn.com\" rel=\"nofollow\">https:&#x2F;&#x2F;www.prairielearn.com</a>) is an open-source assessment platform used by universities across the US (Berkeley, Princeton, Michigan, Illinois, and others). We power mastery-based learning and large-scale exams.<p>We’re a small, profitable, early-stage company (bootstrapped, no VC) that is growing quickly. Our users love us and we have very high retention and rapid spread through word of mouth. As an early-stage hire, you’ll work across the stack and enjoy meaningful ownership from day one.<p>Tech we use: Node.js &#x2F; TypeScript backend, Postgres, AWS, React. We’re also developing AI tooling, including LLM agents to help instructors create content, and vision-language models to help grade student work. PrairieLearn is open core: <a href=\"https:&#x2F;&#x2F;github.com&#x2F;PrairieLearn&#x2F;PrairieLearn\" rel=\"nofollow\">https:&#x2F;&#x2F;github.com&#x2F;PrairieLearn&#x2F;PrairieLearn</a><p>Details:<p>- Location: Remote (US only)<p>- Salary: $100k-$180k depending on experience<p>- Benefits: Stock options (0.5% - 1.5%), unlimited PTO, flexible hours<p>- Role: Full-time. (We’re not able to sponsor visas at this time.)<p>Apply at <a href=\"https:&#x2F;&#x2F;www.prairielearn.com&#x2F;jobs-ashby?utm_source=YeEJ5MAKkr&amp;ashby_jid=ee6fdbc3-1c3a-4fa3-bb3f-13ddab449baf\" rel=\"nofollow\">h",
+   "type": "comment",
+   "children": []
+  },
+  {
+   "author": "shepherd-eng",
+   "created_at": "2026-10-01T15:02:51.000Z",
+   "created_at_i": 1790866971,
+   "id": 49922593,
+   "parent_id": 49922569,
+   "text": "Shepherd (Series B) | ONSITE | San Francisco, CA &amp; New York City, NY<p>At Shepherd, we&#x27;re pursuing the most ambitious technical vision in commercial insurance: fully autonomous underwriting. Shepherd is an AI-native commercial insurance platform transforming how high-hazard industries get covered.<p>The infrastructure behind the AI boom (data centers, semiconductor fabs, renewable energy assets) has to be built and insured, but traditional carriers weren&#x27;t built for this speed. We built Shepherd to solve that.<p>We announced our $42M Series B earlier this year! That brings our total funding to over $60M — led by Intact Private Capital, the investment arm of one of the largest insurers in the world. Intact is not only our lead investor but also a carrier partner, a testament to the confidence the incumbent industry has in what we&#x27;re building.<p>We’re looking for product-minded, high ownership engineers to join our team! The Engineering team is HQ’d in SF, but we’re growing in NYC now too!<p>We’re hiring for 2 Senior Full Stack Software Engineers, 1 Machine Learning Engineer and 1 AI Product Manager in SF, and 2 Staff Full Stack Software Engineers in NYC. Engineers own projects end-to-end so full stack ability is expected.<p>Check out our open roles here: <a href=\"https:&#x2F;&#x2F;shepherdinsurance.com&#x2F;careers\">https:&#x2F;&#x2F;shepherdinsurance.com&#x2F;careers</a>\nOur stack includes: Typescript, React, Next.js, GraphQL w&#x2F; Apollo, Node.js, Postgr",
+   "type": "comment",
+   "children": []
+  },
+  {
+   "author": "mcintyem",
+   "created_at": "2026-10-01T15:03:36.000Z",
+   "created_at_i": 1790867016,
+   "id": 49922609,
+   "parent_id": 49922569,
+   "text": "Sidekick Labs | Senior SWE, R&amp;D Engineer, Intelligence Engineer | REMOTE (US Timezones) | Full-time | $170k to $230k Base + Equity + Health<p>Sidekick builds AI security software for enterprises. Our sensors observe AI behavior and use in situ. From those observations, our reasoning pipeline produces an application inventory and a risk picture, allowing us to provide real-time intervention and coaching right when it matters.<p><i>Compensation:</i> base salary scaled to experience, meaningful early-stage equity, and 100% covered health insurance for you and your immediate family<p>We are a highly senior team. Most of us have been founders or on early founding teams, so we operate with high ownership. We expect you to have a real, current AI-assisted development practice. Our system spans several languages, and we expect you to use AI tools to quickly navigate unfamiliar parts of the codebase so you can comfortably own problems end-to-end across a broad stack.<p>We are hiring for three roles:<p>- <i>Senior Software Engineer:</i> You will work across our event-driven architecture. You&#x27;ll write Go and Python backend services and touch endpoint-deployed browser and desktop components. You need to be comfortable developing in a multi-tenant, microservice-driven SaaS architecture and understand typical scale and security implications for such products.<p>- <i>R&amp;D Engineer:</i> This is not an open-ended research function. You will take ambiguous feasibility questions tie",
+   "type": "comment",
+   "children": []
+  },
+  {
+   "author": "eterps",
+   "created_at": "2026-10-01T15:04:09.000Z",
+   "created_at_i": 1790867049,
+   "id": 49922615,
+   "parent_id": 49922569,
+   "text": "Open Education Applications &#x2F; Neon | Senior&#x2F;Lead Platform &amp; DevOps Engineer, Senior Frontend Engineer, Senior Full-Stack Engineer | Utrecht, The Netherlands | HYBRID | DUTCH REQUIRED<p>Please note: working proficiency in Dutch is strictly required for these roles, and we kindly ask for no automated applications. The rest of this post will continue in Dutch.<p>Wij zijn een non-profit die zich inzet om lesmateriaal voor scholen beter, betaalbaarder en flexibeler te maken, in zowel digitale als gedrukte vorm.<p>Werktijden en kantoordagen zijn flexibel en worden in overleg bepaald op basis van de rol. Wij bieden een competitief salaris.<p>Technologiestack: Git monorepo, TypeScript, Yjs en React, een beetje Python, OpenTofu&#x2F;Terraform, Scaleway, managed PostgreSQL en managed Kubernetes.<p>Openstaande rollen:<p>- Senior&#x2F;Lead Platform &amp; DevOps Engineer<p>- Senior Backend Engineer&#x2F;Architect<p>- Senior Frontend Engineer<p>- Senior Full-Stack Engineer<p>E-mail jobs[at]openeducation.foundation met (HN) + de functienaam in het onderwerp, samen met een korte introductie en een link naar je LinkedIn-profiel en&#x2F;of GitHub. Als er van beide kanten een goede match lijkt te zijn, plan ik graag een kennismakingsgesprek in.<p><a href=\"https:&#x2F;&#x2F;openeducation.foundation\" rel=\"nofollow\">https:&#x2F;&#x2F;openeducation.foundation</a> | <a href=\"https:&#x2F;&#x2F;www.neon.nl\" rel=\"nofollow\">https:&#x2F;&#x2F;www.neon.nl</a>",
+   "type": "comment",
+   "children": []
+  }
+ ],
+ "created_at": "2026-10-01T15:02:07.000Z",
+ "created_at_i": 1790866927,
+ "id": 49922569,
+ "options": [],
+ "parent_id": null,
+ "points": 277,
+ "story_id": 49922569,
+ "text": "Please state the location and include REMOTE for remote work, REMOTE (US)\nor similar if the country is restricted, and ONSITE when remote work is <i>not</i> an option.<p>Please only post if you personally are part of the hiring company—no\nrecruiting firms or job boards. One post per company. If it i",
+ "title": "Ask HN: Who is hiring? (October 2026)",
+ "type": "story",
+ "url": null
+}

@@ -1,0 +1,23 @@
+[Unit]
+Description=JOB-APPLY worker (scoring, applying, inbox, follow-ups, summaries)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jobapply
+Group=jobapply
+WorkingDirectory=/opt/jobapply
+EnvironmentFile=/opt/jobapply/.env
+# Playwright needs a writable HOME for its browser profiles.
+Environment=HOME=/opt/jobapply/data/home
+ExecStart=/opt/jobapply/.venv/bin/jobapply schedule -g worker
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/jobapply
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,28 @@
+# docker compose up -d    (dashboard on :8000; put it behind Tailscale or a reverse proxy)
+services:
+  dashboard:
+    build: .
+    command: serve
+    env_file: .env
+    ports: ["8000:8000"]
+    volumes: ["./data:/app/data"]
+    restart: unless-stopped
+  collector:
+    build: .
+    command: schedule -g collector
+    env_file: .env
+    volumes: ["./data:/app/data"]
+    restart: unless-stopped
+  worker:
+    build: .
+    command: schedule -g worker
+    env_file: .env
+    volumes: ["./data:/app/data"]
+    shm_size: 1g  # Chromium
+    restart: unless-stopped
+  migrate:
+    build: .
+    command: db upgrade
+    env_file: .env
+    volumes: ["./data:/app/data"]
+    profiles: ["setup"]

@@ -1,0 +1,127 @@
+"""Per-user job filters and assignment of new jobs to users."""
+
+from __future__ import annotations
+
+import re
+from datetime import timedelta
+
+from pydantic import BaseModel, Field
+from sqlmodel import Session, select
+
+from jobapply.logs import get_logger
+from jobapply.models import Application, ApplicationEvent, Job, User, utcnow
+from jobapply.pipeline.dedupe import norm_company
+
+log = get_logger(__name__)
+
+SENIORITY_ORDER = ["intern", "junior", "mid", "senior", "lead", "principal", "manager", "director"]
+_SENIORITY_PATTERNS = [
+    ("intern", r"\bintern(ship)?\b|\bpraktik|\btrainee\b|\bwerkstudent"),
+    ("director", r"\bdirector\b|\bvp\b|\bvice president\b|\bhead of\b|\bchief\b|\bcto\b"),
+    ("manager", r"\bmanager\b|\bengineering manager\b"),
+    ("principal", r"\bprincipal\b|\bstaff\b|\bdistinguished\b|\barchitect\b"),
+    ("lead", r"\blead\b|\btech lead\b"),
+    ("senior", r"\bsenior\b|\bsr\.?\b|\biii\b|\bexperienced\b"),
+    ("junior", r"\bjunior\b|\bjr\.?\b|\bentry[- ]level\b|\bgraduate\b|\bnew grad\b|\bassociate\b"),
+]
+
+
+def detect_seniority(title: str) -> str | None:
+    for level, pattern in _SENIORITY_PATTERNS:
+        if re.search(pattern, title, re.I):
+            return level
+    return None
+
+
+class UserFilters(BaseModel):
+    keywords_include: list[str] = Field(default_factory=list)  # any must appear in title or description
+    keywords_exclude: list[str] = Field(default_factory=list)  # none may appear in the title
+    roles: list[str] = Field(default_factory=list)  # any must appear in the title (all words)
+    locations: list[str] = Field(default_factory=list)  # any must appear in location; "remote" matches remote jobs
+    remote_only: bool = False
+    salary_floor: float | None = None  # rejects only when the posted maximum is below it
+    seniority: list[str] = Field(default_factory=list)  # allowed levels; unknown level passes
+    company_blocklist: list[str] = Field(default_factory=list)
+    sources: list[str] = Field(default_factory=list)  # empty means all
+    max_age_hours: int = 72
+
+
+def _contains(haystack: str, needle: str) -> bool:
+    return re.search(rf"(?<!\w){re.escape(needle.lower())}(?!\w)", haystack) is not None
+
+
+def match(job: Job, f: UserFilters, now=None) -> tuple[bool, str]:
+    """Return (passes, reason for rejection or 'ok')."""
+    now = now or utcnow()
+    title = job.title.lower()
+    text = f"{title}\n{job.description.lower()}"
+    location = (job.location or "").lower()
+
+    when = job.posted_at or job.first_seen_at
+    if when and f.max_age_hours and when < now - timedelta(hours=f.max_age_hours):
+        return False, "too old"
+    if f.sources and job.source not in f.sources:
+        return False, "source not selected"
+    company = norm_company(job.company)
+    if any(b and norm_company(b) and norm_company(b) in company for b in f.company_blocklist):
+        return False, "company blocklisted"
+    if f.roles and not any(all(_contains(title, w) for w in role.lower().split()) for role in f.roles):
+        return False, "role not matched"
+    if f.keywords_include and not any(_contains(text, k) for k in f.keywords_include):
+        return False, "no include keyword"
+    if any(_contains(title, k) for k in f.keywords_exclude):
+        return False, "exclude keyword in title"
+    if f.remote_only and not job.remote:
+        return False, "not remote"
+    if f.locations:
+        wants_remote = any(loc.lower() == "remote" for loc in f.locations)
+        if not ((wants_remote and job.remote) or any(_contains(location, loc) for loc in f.locations
+                                                       if loc.lower() != "remote")):
+            return False, "location not matched"
+    if f.salary_floor and job.salary_max and job.salary_max < f.salary_floor:
+        return False, "salary below floor"
+    if f.seniority:
+        level = detect_seniority(job.title)
+        if level and level not in f.seniority:
+            return False, f"seniority {level}"
+    return True, "ok"
+
+
+def user_filters(user: User) -> UserFilters:
+    return UserFilters.model_validate(user.filters or {})
+
+
+def assign_jobs(session: Session, job_ids: list[int] | None = None, users: list[User] | None = None) -> dict[str, int]:
+    """Create an `Application(status=new)` for each user whose filters a job passes.
+
+    `job_ids=None` re-evaluates every job inside the users' age windows (used after filters change).
+    Jobs a user already has a row for are left alone, so nothing is applied to twice.
+    """
+    users = users if users is not None else list(session.exec(select(User).where(User.is_active)).all())
+    counts: dict[str, int] = {}
+    for user in users:
+        f = user_filters(user)
+        stmt = select(Job)
+        if job_ids is not None:
+            if not job_ids:
+                counts[user.username] = 0
+                continue
+            stmt = stmt.where(Job.id.in_(job_ids))
+        elif f.max_age_hours:
+            stmt = stmt.where(Job.first_seen_at >= utcnow() - timedelta(hours=f.max_age_hours * 2))
+        existing = set(session.exec(select(Application.job_id).where(Application.user_id == user.id)).all())
+        added = 0
+        for job in session.exec(stmt).all():
+            if job.id in existing:
+                continue
+            ok, _reason = match(job, f)
+            if ok:
+                app = Application(user_id=user.id, job_id=job.id)
+                session.add(app)
+                session.flush()
+                session.add(ApplicationEvent(application_id=app.id, user_id=user.id, kind="new",
+                                             detail="passed filters"))
+                added += 1
+        counts[user.username] = added
+        log.info("assigned jobs", user=user.username, added=added)
+    return counts

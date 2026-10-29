@@ -1,0 +1,24 @@
+# Ashby (jobs.ashbyhq.com/<company>/<id>/application). Selectors recorded from a live form on 2026-10-28.
+# Besides the _systemfield_* inputs every field has a per-posting uuid, so they are mapped by label.
+ats: ashby
+detect: "jobs\\.ashbyhq\\.com/[^/]+/[0-9a-f-]{36}"
+fields:
+  "input[name=_systemfield_name]": derived.full_name
+  "input[name=_systemfield_email]": profile.email
+  "input[type=tel]": profile.phone
+  "#_systemfield_resume": derived.resume_path
+  "label=LinkedIn": profile.linkedin
+  "label=GitHub": profile.github
+  "label=Portfolio": profile.portfolio
+  "label=Website": profile.portfolio
+  "label=Cover Letter": skip         # Ashby cover letter is a file upload
+  "label=SMS": skip
+  "label=WhatsApp": skip
+  "label=sponsorship": derived.needs_sponsorship
+  "label=Location": profile.location
+submit: "button.ashby-application-form-submit-button, button[type=submit]"
+success:
+  - "text=Application submitted"
+  - "text=Thank you for applying"
+never:
+  - "textarea[name=g-recaptcha-response]"

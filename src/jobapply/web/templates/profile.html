@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Profile · JOB-APPLY{% endblock %}
+{% block content %}
+<h1>Profile</h1>
+<p class="muted small">Your answers vault. Fillers read these values when they fill forms; nothing here is shared with other users.</p>
+<form method="post" action="/profile" class="card">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <h2>Contact and standard answers</h2>
+  <div class="fields">
+    {% for key, label, kind in fields %}
+    <div class="field" {% if kind == 'textarea' %}style="grid-column: 1 / -1"{% endif %}>
+      <label for="{{ key }}">{{ label }}</label>
+      {% if kind == 'textarea' %}<textarea id="{{ key }}" name="{{ key }}" rows="3">{{ profile.get(key, '') }}</textarea>
+      {% elif kind == 'yesno' %}<select id="{{ key }}" name="{{ key }}"><option value="">—</option>
+        <option value="yes" {{ 'selected' if profile.get(key) == 'yes' }}>Yes</option><option value="no" {{ 'selected' if profile.get(key) == 'no' }}>No</option></select>
+      {% else %}<input id="{{ key }}" name="{{ key }}" type="{{ kind }}" value="{{ profile.get(key, '') }}">{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <h2>Skills with years</h2>
+  <div class="field"><label>One per line, <code>skill: years</code></label><textarea name="skills" rows="6" placeholder="Python: 6&#10;AWS: 3">{{ skills }}</textarea></div>
+  <h2>Master resume (JSON Resume)</h2>
+  <div class="field"><label>Variants are generated from this. <a href="https://jsonresume.org/schema" target="_blank" rel="noopener">Schema ↗</a></label>
+    <textarea name="resume_json" rows="12" class="mono">{{ resume_json }}</textarea></div>
+  <button class="btn btn-primary">Save profile</button>
+</form>
+
+<section class="card" style="margin-top:16px">
+  <h2>Resume files</h2>
+  <div class="table-wrap"><table>
+    {% for r in profile.get('resumes', []) %}
+    <tr><td><a href="/files/resume/{{ r.name }}">{{ r.name }}</a></td><td><span class="badge">{{ r.role_type }}</span></td><td class="muted small">{{ r.uploaded_at[:10] }}</td></tr>
+    {% else %}<tr><td class="muted small">No files uploaded.</td></tr>{% endfor %}
+  </table></div>
+  <form method="post" action="/profile/resume" enctype="multipart/form-data" class="row" style="margin-top:12px">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="file" name="file" accept=".pdf,.docx" required>
+    <input type="text" name="role_type" placeholder="role type, e.g. backend" style="width:200px">
+    <button class="btn">Upload</button>
+  </form>
+</section>
+
+<section class="card" id="answers" style="margin-top:16px">
+  <h2>Answer bank</h2>
+  <p class="muted small">Custom questions seen on forms. AI drafts are marked until you approve them. Approved answers are reused instantly.</p>
+  <form method="post" action="/profile/answers">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% for a in answers %}
+    <div class="qa"><label>{{ a.question }} {% if not a.approved %}<span class="chip chip-amber">AI draft</span>{% endif %}</label>
+      <textarea name="answer__{{ a.id }}" rows="2">{{ a.answer }}</textarea></div>
+    {% else %}<p class="muted small">Nothing yet.</p>{% endfor %}
+    <h3>Add a canned answer</h3>
+    <div class="qa"><input type="text" name="new_question" placeholder="Question, e.g. Why do you want to work here?">
+      <textarea name="new_answer" rows="2" placeholder="Answer"></textarea></div>
+    <button class="btn btn-primary">Save answers</button>
+  </form>
+</section>
+{% endblock %}

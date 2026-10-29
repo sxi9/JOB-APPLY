@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Admin · JOB-APPLY{% endblock %}
+{% block content %}
+<h1>Admin</h1>
+<div class="grid grid-2">
+  <form method="post" action="/admin/switches" class="card">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <h2>Global switches</h2>
+    <div class="field"><label>Kill switch (stops every apply run immediately)</label>
+      <select name="kill_switch"><option value="off" {{ 'selected' if not kill }}>off</option><option value="on" {{ 'selected' if kill }}>ON — applying stopped</option></select></div>
+    <div class="field"><label>Dry run (fill and screenshot, never submit)</label>
+      <select name="dry_run"><option value="on" {{ 'selected' if dry }}>on — safe</option><option value="off" {{ 'selected' if not dry }}>off — real submissions allowed per site</option></select></div>
+    <div class="field"><label>Collector interval (minutes)</label><input type="number" name="collect_interval_minutes" min="10" value="{{ interval }}"></div>
+    <div class="row"><button class="btn btn-primary">Save</button>
+      <button class="btn" formaction="/admin/collect">Run collectors now</button></div>
+  </form>
+
+  <form method="post" action="/admin/users" class="card">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <h2>Add user</h2>
+    <div class="fields">
+      <div class="field"><label>Username</label><input type="text" name="username" required></div>
+      <div class="field"><label>Email</label><input type="email" name="email"></div>
+      <div class="field"><label>Password (8+ chars)</label><input type="password" name="password" required minlength="8" autocomplete="new-password"></div>
+      <div class="field"><label>Role</label><select name="role">{% for r in roles %}<option value="{{ r.value }}" {{ "selected" if r.value == "user" }}>{{ r.value }}</option>{% endfor %}</select></div>
+    </div>
+    <button class="btn btn-primary">Create</button>
+  </form>
+</div>
+
+<section class="card" style="margin-top:16px">
+  <h2>Users</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>User</th><th>Role</th><th>Active</th><th>Applied today</th><th>Daily cap</th><th>LLM tokens (30d)</th><th>New password</th><th></th></tr></thead>
+    {% for u in users %}
+    <tr>
+      <form method="post" action="/admin/users/{{ u.id }}"><input type="hidden" name="csrf" value="{{ csrf }}">
+      <td><strong>{{ u.username }}</strong><div class="muted small">{{ u.email }}</div></td>
+      <td><select name="role" {{ 'disabled' if u.id == ctx.user.id }}>{% for r in roles %}<option value="{{ r.value }}" {{ 'selected' if u.role == r }}>{{ r.value }}</option>{% endfor %}</select></td>
+      <td><input type="checkbox" name="is_active" value="1" {{ 'checked' if u.is_active }} {{ 'disabled' if u.id == ctx.user.id }}></td>
+      <td>{{ applied.get(u.id, 0) }}</td>
+      <td><input type="number" name="daily_cap" min="0" value="{{ (u.preferences or {}).get('daily_cap', 40) }}" style="width:80px"></td>
+      <td>{{ tokens.get(u.id, 0) }}</td>
+      <td><input type="password" name="password" autocomplete="new-password" placeholder="unchanged"></td>
+      <td class="row"><button class="btn btn-sm">Save</button></form>
+        <form method="post" action="/admin/view"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="uid" value="{{ u.id }}">
+          <button class="btn btn-sm">View as</button></form></td>
+    </tr>
+    {% endfor %}
+  </table></div>
+</section>
+
+<section class="card" style="margin-top:16px">
+  <h2>LLM providers <span class="badge">backend: {{ llm_backend }}</span></h2>
+  <p class="muted small">Server failover order from <code>JOBAPPLY_LLM_PROVIDERS</code>. Health is for this process since start.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>#</th><th>Provider</th><th>Model</th><th>Server key</th><th>State</th><th>OK / failed</th><th>Last error</th></tr></thead>
+    {% for p in providers %}
+    <tr><td>{{ loop.index }}</td><td>{{ p.spec.label }}</td><td class="mono">{{ p.model }}</td>
+      <td>{% if p.server_key %}<span class="chip chip-green">set</span>{% elif not p.spec.needs_key %}<span class="chip chip-gray">n/a</span>{% else %}<span class="chip chip-amber">missing</span>{% endif %}</td>
+      <td>{% if p.health and p.health.cooling %}<span class="chip chip-red">cooling {{ (p.health.cooldown_left_s // 60) }}m</span>{% elif p.health %}<span class="chip chip-green">ok</span>{% else %}<span class="muted small">unused</span>{% endif %}</td>
+      <td>{{ p.health.successes if p.health else 0 }} / {{ p.health.failures if p.health else 0 }}</td>
+      <td class="small muted">{{ p.health.last_error if p.health else '' }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% if usage_by_model %}<p class="small muted" style="margin-top:8px">Last 30 days:
+    {% for model, calls, toks in usage_by_model %}<span class="badge">{{ model }} · {{ calls }} calls · {{ toks or 0 }} tokens</span> {% endfor %}</p>{% endif %}
+</section>
+
+<section class="card" style="margin-top:16px">
+  <h2>Collector log</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th></th><th>Source</th><th>Started</th><th>Fetched</th><th>New</th><th>Error</th></tr></thead>
+    {% for r in runs %}
+    <tr><td><span class="dot {{ 'dot-ok' if r.ok else 'dot-bad' }}"></span></td><td class="mono">{{ r.source }}</td>
+      <td class="small">{{ r.started_at | dt }}</td><td>{{ r.fetched }}</td><td>{{ r.new }}</td><td class="small muted">{{ r.error or '' }}</td></tr>
+    {% else %}<tr><td colspan="6" class="empty">No runs yet.</td></tr>{% endfor %}
+  </table></div>
+</section>
+{% endblock %}

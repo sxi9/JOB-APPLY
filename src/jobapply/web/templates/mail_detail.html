@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ mail.subject }} · Inbox · JOB-APPLY{% endblock %}
+{% block content %}
+<p class="small"><a href="/inbox">← Inbox</a></p>
+<h1>{{ mail.subject or "(no subject)" }}</h1>
+<div class="muted small">From {{ mail.sender }} · {{ mail.received_at | dt }}
+  {% if app %} · linked to <a href="/applications/{{ app.id }}">{{ job.title }} at {{ job.company }}</a>{% endif %}</div>
+<div class="grid grid-2" style="margin-top:16px">
+  <section class="card"><h2>Message</h2><div class="description">{{ mail.body }}</div></section>
+  <section class="card">
+    <form method="post" action="/inbox/{{ mail.id }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="field"><label>Category</label><select name="category">
+        {% for c in categories %}<option value="{{ c.value }}" {{ 'selected' if c == mail.category }}>{{ c | label }}</option>{% endfor %}</select></div>
+      <div class="field"><label>Draft reply (AI-drafted, edit before sending)</label><textarea name="draft_reply" rows="12">{{ mail.draft_reply }}</textarea></div>
+      <div class="row"><button class="btn btn-primary">Save draft</button>
+        <button class="btn" formaction="/inbox/{{ mail.id }}/send" {{ '' if can_send else 'disabled title="Save SMTP credentials for site mailbox first"' }}>Send reply</button>
+        <button class="btn" formaction="/inbox/{{ mail.id }}/forward" {{ '' if (can_send and forward_to) else 'disabled title="Set a forward address under Settings → Notifications"' }}>Forward{% if forward_to %} to {{ forward_to }}{% endif %}</button>
+        {% if mail.forwarded %}<span class="badge">forwarded</span>{% endif %}</div>
+    </form>
+  </section>
+</div>
+{% endblock %}

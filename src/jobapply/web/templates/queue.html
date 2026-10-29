@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Queue · JOB-APPLY{% endblock %}
+{% block content %}
+<h1>Review queue</h1>
+<p class="muted small">Jobs waiting for approval: auto-submit is off for the site, the score is below your threshold, a dry run is ready for review, or a run paused on a CAPTCHA or low confidence.</p>
+{% for app, job in rows %}
+<section class="card" id="q-{{ app.id }}" style="margin-bottom:16px">
+  <div class="row spread">
+    <div><a class="job-title" href="/jobs/{{ job.id }}">{{ job.title }}</a>
+      <div class="muted small">{{ job.company }} · {{ job.location }} · {{ job.ats_type or job.source }}</div></div>
+    <div class="row"><span class="chip chip-{{ app.status | status_color }}">{{ app.status | label }}</span>
+      <span class="score {{ app.score | score_class }}">{{ app.score if app.score is not none else "–" }}</span></div>
+  </div>
+  {% if app.error %}<div class="flash flash-error" style="margin-top:10px">{{ app.error }}</div>{% endif %}
+  {% if app.score_reason %}<p class="small">{{ app.score_reason }}</p>{% endif %}
+  <form hx-post="/queue/{{ app.id }}" hx-target="#q-{{ app.id }}" hx-swap="outerHTML">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="grid grid-2">
+      <div>
+        <h3>Answers to be filled</h3>
+        {% for label, value in (app.answers or {}).items() %}
+        <div class="qa"><label>{{ label }}</label><input type="text" name="answer__{{ label }}" value="{{ value }}"></div>
+        {% else %}<p class="muted small">No form answers yet. They appear after a dry run.</p>{% endfor %}
+        {% if app.screenshot_path %}<details><summary>Dry-run screenshot</summary>
+          <img class="screenshot" loading="lazy" src="/files/screenshot/{{ app.id }}" alt="dry run screenshot"></details>{% endif %}
+      </div>
+      <div><h3>Cover letter</h3><textarea name="cover_letter" rows="10">{{ app.cover_letter }}</textarea></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn btn-primary" name="decision" value="approve">Approve</button>
+      <button class="btn" name="decision" value="save">Save edits</button>
+      <button class="btn btn-danger" name="decision" value="reject">Reject</button>
+    </div>
+  </form>
+</section>
+{% else %}
+<div class="card empty">Queue is empty.</div>
+{% endfor %}
+{% endblock %}

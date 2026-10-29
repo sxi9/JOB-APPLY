@@ -1,0 +1,105 @@
+{
+ "offset": 0,
+ "limit": 2,
+ "totalFound": 2,
+ "content": [
+  {
+   "id": "744000158367609",
+   "name": "Data & Reporting Analyst",
+   "uuid": "7126627d-8e75-4882-a00d-b6260a430b5f",
+   "jobAdId": "f34201d9-15a5-4f7f-aceb-1acc3ecc8e79",
+   "defaultJobAd": true,
+   "refNumber": "REF32291H",
+   "company": {
+    "identifier": "Experian",
+    "name": "Experian"
+   },
+   "releasedDate": "2026-10-28T18:52:35.834Z",
+   "location": {
+    "city": "Heredia",
+    "region": "Heredia",
+    "country": "cr",
+    "address": "Centro Corporativo el Cafetal",
+    "remote": false,
+    "hybrid": true,
+    "fullLocation": "Heredia, Heredia, Costa Rica"
+   },
+   "industry": {
+    "id": "financial_services",
+    "label": "Financial Services"
+   },
+   "department": {
+    "id": "2618891",
+    "label": "Sales & Business Development"
+   },
+   "function": {
+    "id": "sales",
+    "label": "Sales"
+   },
+   "typeOfEmployment": {
+    "id": "permanent",
+    "label": "Full-time"
+   },
+   "experienceLevel": {
+    "id": "not_applicable",
+    "label": "Not Applicable"
+   },
+   "visibility": "PUBLIC",
+   "ref": "https://api.smartrecruiters.com/v1/companies/Experian/postings/744000158367609",
+   "language": {
+    "code": "en",
+    "label": "English",
+    "labelNative": "English (US)"
+   }
+  },
+  {
+   "id": "744000158366129",
+   "name": "Client Executive, Healthcare SaaS Sales (DE, MD, PA)",
+   "uuid": "56d109cc-c359-4144-bfbc-5e8a65037197",
+   "jobAdId": "15421694-d632-49ac-8fd2-37dc6b15a4cf",
+   "defaultJobAd": true,
+   "refNumber": "REF30416A",
+   "company": {
+    "identifier": "Experian",
+    "name": "Experian"
+   },
+   "releasedDate": "2026-10-28T18:44:13.986Z",
+   "location": {
+    "city": "United States",
+    "region": "UNITED STATES",
+    "country": "us",
+    "address": "United States",
+    "remote": true,
+    "hybrid": false,
+    "fullLocation": "United States, UNITED STATES, United States"
+   },
+   "industry": {
+    "id": "hospital_and_health_care",
+    "label": "Hospital And Health Care"
+   },
+   "department": {
+    "id": "2618891",
+    "label": "Sales & Business Development"
+   },
+   "function": {
+    "id": "sales",
+    "label": "Sales"
+   },
+   "typeOfEmployment": {
+    "id": "permanent",
+    "label": "Full-time"
+   },
+   "experienceLevel": {
+    "id": "mid_senior_level",
+    "label": "Mid-Senior Level"
+   },
+   "visibility": "PUBLIC",
+   "ref": "https://api.smartrecruiters.com/v1/companies/Experian/postings/744000158366129",
+   "language": {
+    "code": "en",
+    "label": "English",
+    "labelNative": "English (US)"
+   }
+  }
+ ]
+}
