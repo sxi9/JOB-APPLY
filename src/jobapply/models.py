@@ -274,3 +274,34 @@ class AppSetting(SQLModel, table=True):
 
     key: str = Field(primary_key=True)
     value: str = ""
+
+
+# ---------------------------------------------------------------- referral outreach (per user)
+
+# Channel and status values for ReferralDraft. Plain strings (not an enum) keep the migration column a
+# simple VARCHAR and the round-trip trivial; these constants document the allowed set.
+REFERRAL_CHANNELS = ("connection_note", "message")
+REFERRAL_STATUSES = ("draft", "approved", "sent", "skipped", "failed")
+
+
+class ReferralDraft(SQLModel, table=True):
+    """A drafted referral request to one contact for one job. DRAFT-ONLY by default: a row exists so the
+    user can review and approve it; nothing is ever sent without the global switch, a per-user daily cap,
+    the kill switch, active hours and that row being `approved` (see sites.linkedin.referral.send_referral).
+    Always read/written per user through UserScope."""
+
+    __tablename__ = "referral_drafts"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    job_id: int | None = Field(default=None, foreign_key="jobs.id", index=True)
+    contact_name: str = ""
+    contact_headline: str = ""
+    contact_profile_url: str = ""
+    channel: str = "connection_note"  # connection_note | message
+    body: str = Field(default="", sa_column=Column(Text, nullable=False, default=""))
+    status: str = Field(default="draft", index=True)  # draft | approved | sent | skipped | failed
+    error: str | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+    sent_at: datetime | None = None

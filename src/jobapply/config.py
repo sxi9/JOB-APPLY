@@ -105,6 +105,13 @@ class Settings(BaseSettings):
     linkedin_headless: bool = False
     linkedin_active_hours: str = "08:00-23:00"
 
+    # Referral outreach (DRAFT-ONLY by default). Generating/queuing drafts never contacts anyone.
+    # SENDING a connection request or message is gated behind this switch (off), the admin toggle, a
+    # per-user daily cap, the kill switch, the active hours and per-draft approval. LinkedIn bans accounts
+    # for automated outreach, so this must stay off until the user explicitly turns it on.
+    referral_send: bool = False
+    referral_daily_cap: int = 5
+
     @property
     def screenshots_dir(self) -> Path:
         return self.data_dir / "screenshots"

@@ -31,3 +31,11 @@ def global_dry_run(session: Session) -> bool:
 
 def collect_interval(session: Session) -> int:
     return int(get_value(session, "collect_interval_minutes") or get_settings().collect_interval_minutes)
+
+
+def referral_send_enabled(session: Session) -> bool:
+    """True only when referral outreach may actually be sent. OFF by default: both the env flag
+    (`JOBAPPLY_REFERRAL_SEND`) and the admin toggle (`referral_send` app setting) stay on the safe side,
+    so sending is enabled only when one of them is explicitly turned on. This gates `send_referral`; it
+    never affects drafting, which is always allowed and contacts no one."""
+    return bool(get_settings().referral_send) or get_value(session, "referral_send") == "on"

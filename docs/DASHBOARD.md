@@ -39,3 +39,10 @@ Username and password. Roles: admin (sees all users) and user (own data only).
 
 ## Admin
 - Users, add user, per-user usage and caps, collector schedule, logs, global kill switch.
+
+## Referrals
+- Review page for referral drafts (`/referrals`, `web/routes/referrals.py` + `referrals.html`), per-user scoped through `ctx.scope` (admin "View as" respected), CSRF on every POST.
+- Lists this user's drafts newest-first, grouped by status (draft / approved / sent / skipped / failed). Each card shows the contact name + headline (name linked to their LinkedIn profile), the related job title + company (linked), the channel, and an editable message body.
+- Actions: `POST /referrals/{id}/save` (edit body only), `/approve` (draft → approved), `/unapprove` (approved → draft), `/skip` (→ skipped). Approve/skip are no-ops outside their valid source status.
+- **Safety.** Drafts are safe: generating/queuing a draft never contacts anyone, and **approving does not send** — it only marks a draft ready. Sending a LinkedIn connection request or message is a separate, manual, capped step that is **off by default**, gated behind the global referral-send switch, a per-user daily cap, the kill switch, active hours and per-draft approval (the core path `sites.linkedin.referral.send_referral`, in the worker/CLI, not this dashboard). The page shows a banner and an "About LinkedIn automation risk" explainer; it deliberately has no send button, so nothing here can bypass those gates.
+- The `ReferralDraft` model is imported lazily in the handlers: the page is empty-safe and still renders if the model is absent.

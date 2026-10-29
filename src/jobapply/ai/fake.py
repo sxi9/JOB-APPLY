@@ -18,6 +18,7 @@ from jobapply.ai.heuristics import (  # noqa: F401
     application_message_template,
     cover_letter_template,
     heuristic_answer,
+    referral_message_template,
     score_job_heuristic,
 )
 
@@ -69,6 +70,10 @@ class FakeLLM(LLM):
 
     def _application_message(self, ctx: dict) -> str:
         return application_message_template(ctx.get("profile", {}), ctx["job"], ctx.get("tone", "professional"))
+
+    def _referral_message(self, ctx: dict) -> str:
+        return referral_message_template(ctx.get("profile", {}), ctx["job"], ctx.get("contact", {}),
+                                         ctx.get("channel", "connection_note"))
 
     def _recover_field(self, ctx: dict) -> RecoverResult:
         """Deterministic fix: pick a matching option when options are given, otherwise reformat a phone-like

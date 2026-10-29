@@ -6,6 +6,7 @@ import json
 import re
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -21,7 +22,14 @@ from jobapply.ai.base import (
     ResumeVariant,
     ScoreResult,
 )
-from jobapply.ai.heuristics import application_message_template, cover_letter_template, score_job_heuristic
+from jobapply.ai.heuristics import (
+    application_message_template,
+    cap_text,
+    cover_letter_template,
+    referral_cap,
+    referral_message_template,
+    score_job_heuristic,
+)
 from jobapply.ai.providers import FailoverLLM, ProviderConfig, parse_keys, parse_order, server_configs
 from jobapply.ai.resume import render_resume_pdf
 from jobapply.config import get_settings
@@ -302,6 +310,53 @@ def application_message(session: Session, llm: LLM | None, user: User, job: Job,
             log.warning("application message errored, using template", user=user.username, job=job.id,
                         error=f"{type(exc).__name__}: {exc}")
     return application_message_template(user, job, tone)
+
+
+def _contact_ctx(contact: Any) -> dict:
+    """Serialise a Contact dataclass (or dict) for the LLM context and the FakeLLM."""
+    if isinstance(contact, dict):
+        src = contact
+    else:
+        src = {k: getattr(contact, k, None) for k in ("name", "headline", "profile_url", "is_recruiter")}
+    return {"name": str(src.get("name") or ""), "headline": str(src.get("headline") or ""),
+            "profile_url": str(src.get("profile_url") or ""), "is_recruiter": bool(src.get("is_recruiter"))}
+
+
+def referral_message(session: Session, llm: LLM | None, user: User, job: Job, contact: Any,
+                     channel: str = "connection_note") -> str:
+    """A short, specific, polite referral request to one hiring-team contact, grounded in the user's profile,
+    THIS job and the contact's role. `channel` sets the length: a connection note stays <= 300 chars, a direct
+    message may run a little longer. Tone comes from the user's preferences.
+
+    With no LLM (or on any LLM failure) this falls back to `referral_message_template`, so it never raises; the
+    result is always capped to the channel's limit even when the model ignores it. Drafting only: this contacts
+    no one."""
+    channel = channel if channel in ("connection_note", "message") else "connection_note"
+    cap = referral_cap(channel)
+    tone = (user.preferences or {}).get("cover_letter_tone", "professional")
+    if llm is not None:
+        try:
+            length = (f"Keep it to at most {cap} characters (a LinkedIn connection note), one or two sentences."
+                      if channel == "connection_note"
+                      else f"Keep it to at most {cap} characters, two to four short sentences.")
+            req = LLMRequest(
+                task="referral_message", max_tokens=1024,
+                system=prompts.REFERRAL_SYSTEM.format(tone=tone, length=length,
+                                                      profile=prompts.profile_text(user)),
+                prompt=prompts.referral_prompt(job, contact, channel, cap),
+                context={"profile": _profile_ctx(user), "job": _job_ctx(job), "contact": _contact_ctx(contact),
+                         "tone": tone, "channel": channel},
+            )
+            text = run(session, llm, user, req).text.strip()
+            if text:
+                return cap_text(text, cap)
+        except LLMError as exc:
+            log.warning("referral message via LLM failed, using template", user=user.username, job=job.id,
+                        error=str(exc))
+        except Exception as exc:  # noqa: BLE001 - a non-LLMError provider failure must not break drafting
+            log.warning("referral message errored, using template", user=user.username, job=job.id,
+                        error=f"{type(exc).__name__}: {exc}")
+    return cap_text(referral_message_template(user, job, contact, channel), cap)
 
 
 def master_resume_pdf(user: User) -> Path:

@@ -1,0 +1,53 @@
+<!-- Synthetic (2026-10-29): the "Meet the hiring team" block on a LOGGED-IN LinkedIn job page, with two
+     hirers. Jane is a recruiter already connected to the candidate (a Message button, no Connect action);
+     Raj is a hiring manager not yet connected (a Connect action). The trailing "people also viewed" rail
+     carries its own /in/ link, which the card-bounded parser must ignore.
+     parse_hiring_team -> [Jane Recruiter (message), Raj Kumar (connection_note)]. -->
+<section class="job-details-module artdeco-card jobs-details__main-content">
+  <h2 class="text-heading-large">Meet the hiring team</h2>
+
+  <div class="hirer-card__container display-flex align-items-center">
+    <a class="app-aware-link hirer-card__container-link"
+       href="https://www.linkedin.com/in/jane-recruiter-9a8b?miniProfileUrn=urn%3Ali%3Afs_miniProfile%3A1&amp;trk=d_flagship3_job_details">
+      <img class="hirer-card__profile-image" alt="Jane Recruiter" src="https://media.licdn.com/dms/image/x.jpg" />
+    </a>
+    <div class="hirer-card__hirer-information">
+      <div class="display-flex align-items-center">
+        <a class="app-aware-link"
+           href="https://www.linkedin.com/in/jane-recruiter-9a8b?miniProfileUrn=urn%3Ali%3Afs_miniProfile%3A1">
+          <span class="t-bold" dir="ltr"><span aria-hidden="true">Jane Recruiter</span><span
+              class="visually-hidden">Jane Recruiter</span></span>
+        </a>
+      </div>
+      <div class="hirer-card__hirer-job-title t-14 t-black t-normal">Technical Recruiter at Stripe</div>
+      <button aria-label="Message Jane Recruiter" class="artdeco-button artdeco-button--secondary">
+        <span class="artdeco-button__text">Message</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="hirer-card__container display-flex align-items-center">
+    <a class="app-aware-link hirer-card__container-link"
+       href="https://www.linkedin.com/in/raj-kumar-eng?miniProfileUrn=urn%3Ali%3Afs_miniProfile%3A2">
+      <img class="hirer-card__profile-image" alt="Raj Kumar" src="https://media.licdn.com/dms/image/y.jpg" />
+    </a>
+    <div class="hirer-card__hirer-information">
+      <div class="display-flex align-items-center">
+        <a class="app-aware-link"
+           href="https://www.linkedin.com/in/raj-kumar-eng?miniProfileUrn=urn%3Ali%3Afs_miniProfile%3A2">
+          <span class="t-bold" dir="ltr"><span aria-hidden="true">Raj Kumar</span></span>
+        </a>
+      </div>
+      <div class="hirer-card__hirer-job-title t-14 t-black t-normal">Engineering Manager, Payments at Stripe</div>
+      <button aria-label="Connect with Raj Kumar" data-control-name="connect"
+              class="artdeco-button artdeco-button--primary">
+        <span class="artdeco-button__text">Connect</span>
+      </button>
+    </div>
+  </div>
+</section>
+
+<aside class="jobs-similar-jobs">
+  <h2>People also viewed</h2>
+  <a href="https://www.linkedin.com/in/some-recommended-person-should-be-ignored">Unrelated person</a>
+</aside>

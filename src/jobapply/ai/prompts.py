@@ -83,6 +83,41 @@ Candidate profile:
 """
 
 
+REFERRAL_SYSTEM = """You write a short, polite referral request a candidate would send to a person on the
+hiring team of a company they are applying to, for an automated job application assistant.
+Tone: {tone}. {length}
+No greeting line and no sign-off beyond the candidate's first name if it fits the length; no headers, no
+placeholders (write it ready to send), no bullet points, no hashtags, no emoji. Be specific and genuine:
+name the exact role, acknowledge the contact's part in it (recruiter, manager, team), and give ONE real
+reason the candidate fits, grounded in the candidate profile below. Ask, courteously, whether they would be
+open to a referral or a short chat. Never invent experience, titles or credentials the profile does not show.
+
+Candidate profile:
+{profile}
+"""
+
+
+def referral_prompt(job: Job, contact: Any, channel: str, cap: int) -> str:
+    name = _contact_attr(contact, "name")
+    headline = _contact_attr(contact, "headline")
+    kind = "a LinkedIn connection request note" if channel == "connection_note" else "a direct message"
+    lines = [
+        f"You are writing {kind}.",
+        f"Hard limit: at most {cap} characters. Stay well under it.",
+        f"Contact: {name}" + (f" — {headline}" if headline else ""),
+        "",
+        "The role the candidate is applying to:",
+        job_text(job, 4000),
+    ]
+    return "\n".join(lines)
+
+
+def _contact_attr(contact: Any, attr: str) -> str:
+    if isinstance(contact, dict):
+        return str(contact.get(attr) or "")
+    return str(getattr(contact, attr, "") or "")
+
+
 def recover_prompt(question: str, value_tried: str, field_type: str, options: list[str] | None,
                    error_text: str, dom_snippet: str) -> str:
     lines = [f"Question: {question}", f"Field type: {field_type}", f"Value tried: {value_tried!r}"]

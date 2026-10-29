@@ -459,3 +459,77 @@ def application_message_template(user: User | dict | None, job: Job | dict, tone
     if notice:
         sentences.append(f"I can start within {notice} and would welcome the chance to discuss the role.")
     return " ".join(sentences[:4])
+
+
+# ------------------------------------------------------------------ referral outreach
+
+
+CONNECTION_NOTE_CAP = 300  # LinkedIn's connection-note character limit
+MESSAGE_CAP = 900  # a direct message can be a bit longer
+
+
+def _contact_field(contact: Any, attr: str) -> str:
+    """Read a Contact dataclass or a plain dict without importing the Contact type (keeps this module
+    free of a sites.linkedin dependency and never raises on a missing attribute)."""
+    if isinstance(contact, dict):
+        return str(contact.get(attr) or "")
+    return str(getattr(contact, attr, "") or "")
+
+
+def _first_name(name: str) -> str:
+    return (name or "").strip().split(" ")[0] if name else ""
+
+
+def referral_cap(channel: str) -> int:
+    return MESSAGE_CAP if channel == "message" else CONNECTION_NOTE_CAP
+
+
+def cap_text(text: str, limit: int) -> str:
+    """Trim `text` to at most `limit` characters, cutting at a sentence or word boundary when possible."""
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    for sep in (". ", "! ", "? "):
+        i = cut.rfind(sep)
+        if i >= limit // 2:
+            return cut[: i + 1].strip()
+    i = cut.rfind(" ")
+    return (cut[:i] if i >= limit // 2 else cut).strip()
+
+
+def referral_message_template(user: User | dict | None, job: Job | dict, contact: Any,
+                              channel: str = "connection_note") -> str:
+    """No-LLM referral request, grounded in the profile + this job + the contact's role. Never raises.
+
+    Short enough for a connection note (<= 300 chars) by default; a direct message (`channel="message"`) may
+    run a little longer. No placeholders: it is ready to send."""
+    p, j = _profile_of(user), _job_of(job)
+    name = f"{p.get('first_name') or ''} {p.get('last_name') or ''}".strip() or "a candidate"
+    skills = _skill_labels(p)
+    top = ", ".join(s.title() if s.islower() else s for s in skills[:2]) or "the stack this role uses"
+    years = p.get("years_experience")
+    exp = f"{years} years with " if years else "hands-on experience with "
+    role = (j.get("title") or "the open role").strip()
+    company = (j.get("company") or "your team").strip()
+    contact_first = _first_name(_contact_field(contact, "name"))
+    is_recruiter = bool(_contact_field(contact, "is_recruiter")) or "recruit" in _contact_field(
+        contact, "headline").lower()
+    hi = f"Hi {contact_first}," if contact_first else "Hi,"
+
+    if channel == "message":
+        who = "you recruit for" if is_recruiter else "you're on the team for"
+        body = (
+            f"{hi} I'm applying for the {role} role at {company}, which {who}. "
+            f"I bring {exp}{top} and think I'd be a strong fit. "
+            f"Would you be open to a quick chat or to referring my application? "
+            f"Thank you for considering it.\n\n{_first_name(name) or name}"
+        )
+        return cap_text(body, referral_cap(channel))
+
+    # connection note: terse, under 300 chars, no sign-off needed
+    note = (
+        f"{hi} I'm applying for the {role} role at {company} and bring {exp}{top}. "
+        f"Would you be open to connecting about it or referring me? Thank you!"
+    )
+    return cap_text(note, referral_cap(channel))

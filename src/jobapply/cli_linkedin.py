@@ -191,4 +191,124 @@ def apply(
     typer.echo(f"{len(outcomes)} outcome(s), dry_run={dry_run}")
 
 
+@linkedin_app.command("referrals-find")
+def referrals_find(
+    user: str = typer.Option(..., "--user", "-u", help="Username"),
+    job: int = typer.Option(None, "--job", help="A single job id (default: the user's queued/approved jobs)"),
+    limit: int = typer.Option(10, "--limit", "-n", help="How many jobs to scan"),
+) -> None:
+    """Find hiring-team contacts for the user's queued/approved applications (or one job) and generate
+    referral DRAFTS. This only reads job pages and writes drafts; it never contacts anyone."""
+    from playwright.sync_api import sync_playwright
+
+    from jobapply.ai.base import LLMError
+    from jobapply.ai.service import get_llm
+    from jobapply.db import session_scope
+    from jobapply.models import Application, AppStatus, Job
+    from jobapply.repo import UserScope
+    from jobapply.sites.browser import launch_persistent
+    from jobapply.sites.linkedin.referral import find_contacts, generate_referral_drafts
+    from jobapply.sites.linkedin.session import LinkedInSession
+
+    with session_scope() as session:
+        u = _load_user(session, user)
+        if job is not None:
+            j = session.get(Job, job)
+            jobs = [j] if j is not None else []
+        else:
+            scope = UserScope(session, u)
+            rows = scope.applications_with_jobs(
+                Application.status.in_((AppStatus.approved, AppStatus.queued)), limit=500)
+            jobs, seen = [], set()
+            for _app, jb in rows:
+                if jb.id in seen:
+                    continue
+                seen.add(jb.id)
+                jobs.append(jb)
+            jobs = jobs[:limit]
+        if not jobs:
+            typer.echo("no jobs to find referrals for")
+            raise typer.Exit(code=0)
+        try:
+            llm = get_llm(session, u)
+        except LLMError:
+            llm = None  # template fallback: drafting works with no LLM key
+        total = 0
+        with sync_playwright() as pw:
+            # Discovery only reads job pages, so it runs headless (works on a machine with no display).
+            context = launch_persistent(pw, u.id, "linkedin", headless=True)
+            try:
+                page = context.pages[0] if context.pages else context.new_page()
+                status = LinkedInSession(context, u, session).check(page)
+                if status != "ok":
+                    typer.echo(f"linkedin session: {status}; run `jobapply linkedin login -u {user}` first",
+                               err=True)
+                    raise typer.Exit(code=1)
+                for jb in jobs:
+                    contacts = find_contacts(page, jb.url or jb.apply_url)
+                    drafts = generate_referral_drafts(session, u, jb, contacts, llm)
+                    session.commit()
+                    total += len(drafts)
+                    typer.echo(f"job {jb.id} {jb.company}: {len(contacts)} contact(s), {len(drafts)} new draft(s)")
+            finally:
+                try:
+                    context.close()
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("browser context already closed", error=str(exc)[:120])
+        typer.echo(f"{total} referral draft(s) generated (draft-only; nothing sent)")
+
+
+@linkedin_app.command("referrals-send")
+def referrals_send(
+    user: str = typer.Option(..., "--user", "-u", help="Username"),
+    limit: int = typer.Option(5, "--limit", "-n", help="Max approved drafts to attempt"),
+) -> None:
+    """Send APPROVED referral drafts, subject to every gate. Refuses (and sends nothing) when the global
+    referral send switch is off. Each draft is still re-checked by send_referral: approved, under the daily
+    cap, kill switch off, active hours."""
+    from jobapply.db import session_scope
+    from jobapply.models import ReferralDraft
+    from jobapply.repo import UserScope
+    from jobapply.switches import referral_send_enabled
+
+    with session_scope() as session:
+        u = _load_user(session, user)
+        if not referral_send_enabled(session):
+            typer.echo("referral sending is DISABLED (global switch off): nothing sent. Turn on "
+                       "JOBAPPLY_REFERRAL_SEND or the admin 'referral_send' toggle to allow it.", err=True)
+            raise typer.Exit(code=2)
+        scope = UserScope(session, u)
+        drafts = list(scope.all(ReferralDraft, ReferralDraft.status == "approved", limit=limit))
+        if not drafts:
+            typer.echo("no approved referral drafts to send")
+            raise typer.Exit(code=0)
+
+        from playwright.sync_api import sync_playwright
+
+        from jobapply.sites.browser import launch_persistent
+        from jobapply.sites.linkedin.referral import send_referral
+        from jobapply.sites.linkedin.session import LinkedInSession
+
+        sent = 0
+        with sync_playwright() as pw:
+            # The send path drives an already-logged-in profile, so it runs headless like discovery.
+            context = launch_persistent(pw, u.id, "linkedin", headless=True)
+            try:
+                page = context.pages[0] if context.pages else context.new_page()
+                if LinkedInSession(context, u, session).check(page) != "ok":
+                    typer.echo(f"linkedin session not ok; run `jobapply linkedin login -u {user}` first", err=True)
+                    raise typer.Exit(code=1)
+                for d in drafts:
+                    ok, reason = send_referral(session, u, d, page)
+                    session.commit()
+                    typer.echo(f"draft {d.id} -> {d.contact_name}: {'SENT' if ok else 'skipped'} ({reason})")
+                    sent += 1 if ok else 0
+            finally:
+                try:
+                    context.close()
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("browser context already closed", error=str(exc)[:120])
+        typer.echo(f"{sent} referral(s) sent")
+
+
 __all__ = ["linkedin_app"]

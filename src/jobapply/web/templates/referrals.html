@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Referrals · JOB-APPLY{% endblock %}
+{% block content %}
+<h1>Referral drafts</h1>
+
+<div class="flash flash-ok small" style="margin-bottom:14px">
+  <strong>These drafts are safe.</strong> Generating and queuing referral drafts never contacts anyone.
+  <strong>Approving does not send.</strong> Sending a LinkedIn connection request or message is a separate,
+  manual step that is <strong>off by default</strong> and capped per day — LinkedIn bans accounts for
+  automated outreach, so nothing here reaches a person until a human turns the global referral-send switch
+  on and a run picks up a draft you approved.
+</div>
+
+<details class="card" style="margin-bottom:16px">
+  <summary>About LinkedIn automation risk</summary>
+  <p class="small">LinkedIn detects and bans accounts that send connection requests or messages
+    automatically. This page only lets you review, edit, approve or skip drafts. Even an approved draft is
+    never auto-sent: sending is gated behind a global send switch (off by default), a per-user daily
+    referral cap, the kill switch and active hours, and each message must have been approved individually.
+    Keep volumes low and review every draft before approving.</p>
+</details>
+
+{% if not available %}
+  <div class="card empty">Referral drafts are not set up yet.</div>
+{% elif total == 0 %}
+  <div class="card empty">No referral drafts yet. They appear here once referrals are generated for your
+    queued jobs.</div>
+{% else %}
+  {% for status in status_order %}
+    {% set rows = groups[status] %}
+    {% if rows %}
+    <h2 class="row" style="gap:8px">{{ status_labels[status] }}
+      <span class="chip chip-{{ status | status_color }}">{{ rows | length }}</span></h2>
+    {% for draft, job in rows %}
+    <section class="card" id="ref-{{ draft.id }}" style="margin-bottom:16px">
+      <div class="row spread">
+        <div>
+          {% if draft.contact_profile_url and draft.contact_profile_url.startswith("https://www.linkedin.com/") %}
+            <a class="job-title" href="{{ draft.contact_profile_url }}" target="_blank" rel="noopener noreferrer">{{ draft.contact_name or "Unknown contact" }}</a>
+          {% else %}
+            <span class="job-title">{{ draft.contact_name or "Unknown contact" }}</span>
+          {% endif %}
+          {% if draft.contact_headline %}<div class="muted small">{{ draft.contact_headline }}</div>{% endif %}
+          <div class="muted small">
+            {% if job %}For <a href="/jobs/{{ job.id }}">{{ job.title }}</a> · {{ job.company }}{% else %}No linked job{% endif %}
+            · via {{ draft.channel or "—" }}
+          </div>
+        </div>
+        <div class="row">
+          <span class="chip chip-{{ draft.status | status_color }}">{{ draft.status | label }}</span>
+          <span class="muted small">{{ draft.created_at | ago }}</span>
+        </div>
+      </div>
+      {% if draft.error %}<div class="flash flash-error small" style="margin-top:10px">{{ draft.error }}</div>{% endif %}
+
+      {% set editable = draft.status in ("draft", "approved") %}
+      <form method="post" action="/referrals/{{ draft.id }}/save" style="margin-top:10px">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label class="small muted" for="body-{{ draft.id }}">Message</label>
+        <textarea id="body-{{ draft.id }}" name="body" rows="5" {{ "readonly" if not editable }}>{{ draft.body or "" }}</textarea>
+        {% if editable %}<div class="row" style="margin-top:8px"><button class="btn" type="submit">Save edits</button></div>{% endif %}
+      </form>
+
+      <div class="row" style="margin-top:10px; gap:8px">
+        {% if draft.status == "draft" %}
+          <form method="post" action="/referrals/{{ draft.id }}/approve" style="display:inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="btn btn-primary" type="submit">Approve</button>
+          </form>
+          <form method="post" action="/referrals/{{ draft.id }}/skip" style="display:inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="btn btn-danger" type="submit">Skip</button>
+          </form>
+        {% elif draft.status == "approved" %}
+          <form method="post" action="/referrals/{{ draft.id }}/unapprove" style="display:inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="btn" type="submit">Move back to draft</button>
+          </form>
+          <form method="post" action="/referrals/{{ draft.id }}/skip" style="display:inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="btn btn-danger" type="submit">Skip</button>
+          </form>
+          <span class="muted small">Approved, not sent. Sending is manual, capped and off by default.</span>
+        {% endif %}
+      </div>
+    </section>
+    {% endfor %}
+    {% endif %}
+  {% endfor %}
+
+  {% if other %}
+  <h2>Other</h2>
+  {% for draft, job in other %}
+  <section class="card" style="margin-bottom:16px">
+    <div class="row spread">
+      <div><span class="job-title">{{ draft.contact_name or "Unknown contact" }}</span>
+        <div class="muted small">{{ draft.channel or "—" }}</div></div>
+      <span class="chip chip-{{ draft.status | status_color }}">{{ draft.status | label }}</span>
+    </div>
+    <textarea rows="4" readonly style="margin-top:10px">{{ draft.body or "" }}</textarea>
+  </section>
+  {% endfor %}
+  {% endif %}
+{% endif %}
+{% endblock %}

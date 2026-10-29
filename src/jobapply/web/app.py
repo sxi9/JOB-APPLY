@@ -14,7 +14,18 @@ from jobapply.config import get_settings
 from jobapply.db import get_engine
 from jobapply.web import filters as jinja_filters
 from jobapply.web.deps import LoginRequired, templates
-from jobapply.web.routes import admin, applications, auth, home, inbox, jobs, profile, queue, settings
+from jobapply.web.routes import (
+    admin,
+    applications,
+    auth,
+    home,
+    inbox,
+    jobs,
+    profile,
+    queue,
+    referrals,
+    settings,
+)
 
 
 def create_app(engine: Engine | None = None, secret_key: str | None = None) -> FastAPI:
@@ -42,6 +53,6 @@ def create_app(engine: Engine | None = None, secret_key: str | None = None) -> F
     def healthz() -> dict:
         return {"ok": True}
 
-    for module in (auth, home, jobs, queue, applications, inbox, profile, settings, admin):
+    for module in (auth, home, jobs, queue, applications, inbox, referrals, profile, settings, admin):
         app.include_router(module.router)
     return app
