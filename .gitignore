@@ -12,3 +12,6 @@ data/
 .ruff_cache/
 *.egg-info/
 .claude/
+*.db-wal
+*.db-shm
+*.db-journal
