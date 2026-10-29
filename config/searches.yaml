@@ -68,6 +68,7 @@ assisted:
   cutshort:
     enabled: true            # public hub endpoint (/backend-api/webpage/jobs/<topic>-jobs), CDN-cached 4 h
     location: ""
+    hours_old: 168           # hubs are cached and sparse day-to-day; a 24 h window returned 0 live on 2026-10-29
     max_results: 50
     max_requests: 40
     remote_only: false
