@@ -53,20 +53,26 @@
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <h2>Sites</h2>
   <div class="table-wrap"><table>
-    <thead><tr><th>Site</th><th>Enabled</th><th>Auto-submit</th><th>Daily cap</th><th>Login</th></tr></thead>
+    <thead><tr><th>Site</th><th>Enabled</th><th>Auto-submit</th><th>Daily cap</th><th>Login</th><th>Connect</th></tr></thead>
     {% for s in sites %}
     <tr>
-      <td>{{ s.site }}</td>
+      <td>{{ s.site }}<div class="muted small">{{ site_kind(s.site) }}</div></td>
       <td><input type="checkbox" name="enabled__{{ s.site }}" value="1" {{ 'checked' if s.enabled }}></td>
       <td><input type="checkbox" name="auto__{{ s.site }}" value="1" {{ 'checked' if s.auto_submit }}></td>
       <td><input type="number" name="cap__{{ s.site }}" value="{{ s.daily_cap }}" min="0" style="width:80px"></td>
       <td class="small">{% if s.login_status == 'n/a' %}<span class="muted">no login needed</span>{% else %}
         <span class="chip chip-{{ 'green' if s.login_status == 'ok' else 'amber' if s.login_status == 'unknown' else 'red' }}">{{ s.login_status | label }}</span>
-        <button class="btn btn-sm" formaction="/settings/sites/{{ s.site }}/relogin">Re-login</button>{% endif %}</td>
+        {% if connectable(s.site) %}<button class="btn btn-sm" formaction="/settings/sites/{{ s.site }}/check">Check</button>
+        {% else %}<button class="btn btn-sm" formaction="/settings/sites/{{ s.site }}/relogin">Re-login</button>{% endif %}{% endif %}</td>
+      <td class="small">{% if connectable(s.site) %}
+        <input type="file" name="file" accept=".json,application/json" style="max-width:180px">
+        <button class="btn btn-sm" formaction="/settings/sites/{{ s.site }}/cookies" formenctype="multipart/form-data">Connect {{ site_label(s.site) }}</button>
+        {% else %}<span class="muted">—</span>{% endif %}</td>
     </tr>
     {% endfor %}
   </table></div>
   <p class="muted small">Auto-submit stays off until a few dry runs on that site look right in the Queue. The global dry-run switch on the Admin page overrides everything.</p>
+  <p class="muted small"><strong>Connect</strong> (LinkedIn, Naukri, Instahyre, Cutshort, Wellfound): export that site's cookies from your own logged-in browser with a cookie-export extension (the usual <code>cookies.json</code> array) and upload the file here. It is stored only in your private browser profile on this server, never in the repo; nothing types your password. <strong>Check</strong> opens the site headless with the saved profile and refreshes the Login column (ok / expired / challenge). A <em>challenge</em> means the site wants a captcha or OTP: finish it in your own browser, export again, re-connect.</p>
   <button class="btn btn-primary">Save sites</button>
 </form>
 

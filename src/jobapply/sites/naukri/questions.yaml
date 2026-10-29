@@ -1,0 +1,33 @@
+# Naukri chatbot questionnaire map and selector overrides (read by jobapply.sites.naukri.apply).
+#
+# This is NOT a form profile: config/form_profiles/ is reserved for ATS forms the generic FormRunner fills,
+# and a Naukri job page has no form (the "Apply" button submits in one click, then a chatbot drawer asks
+# questions one at a time). Fix a selector or add a standard question here; no code change is needed.
+#
+# `questions`: case-insensitive substring of the bot's question -> vault key (profile.<field>, derived.<x>,
+# const:<literal>). Checked before the shared label rules and before the answer bank / heuristics / LLM.
+#
+# Selectors recorded from the 2025-2026 React job page (ids are stable, class names are hashed):
+#   button#apply-button            "Apply" (one click = submit)      button#company-site-button  "Apply on company site"
+#   button#already-applied         "Applied"                         a#login_Layer               logged-out header
+#   div.chatbot_Drawer             questionnaire drawer              .botMsg                     bot question
+#   div.textArea[contenteditable]  free-text answer                  div.sendMsg                 send / save
+#   .ssrc__radio-btn-container     single-choice options             textarea#resumeHeadlineTxt  profile headline
+site: naukri
+questions:
+  "notice period": profile.notice_period
+  "serving notice": profile.notice_period
+  "current ctc": profile.current_ctc
+  "current salary": profile.current_ctc
+  "expected ctc": profile.expected_ctc
+  "expected salary": profile.expected_ctc
+  "total experience": profile.years_experience
+  "years of experience": profile.years_experience
+  "current location": profile.location
+  "preferred location": profile.location
+  "relocat": derived.willing_to_relocate
+  "current company": profile.current_company
+  "current designation": profile.current_title
+  "highest qualification": profile.education
+  "linkedin": profile.linkedin
+selectors: {}

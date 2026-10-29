@@ -112,6 +112,11 @@ class Settings(BaseSettings):
     # always needs a visible window. Runs outside the active hours are skipped by the scheduler.
     linkedin_headless: bool = False
     linkedin_active_hours: str = "08:00-23:00"
+    # Other assisted sites (cookie-import login, always headless). Empty = the LinkedIn window above.
+    naukri_active_hours: str | None = None
+    instahyre_active_hours: str | None = None
+    cutshort_active_hours: str | None = None
+    wellfound_active_hours: str | None = None
 
     # Referral outreach (DRAFT-ONLY by default). Generating/queuing drafts never contacts anyone.
     # SENDING a connection request or message is gated behind this switch (off), the admin toggle, a

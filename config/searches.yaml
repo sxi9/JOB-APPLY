@@ -45,3 +45,37 @@ hot:
   companies: []
   linkedin: false
   # linkedin_minutes_old: 15
+# Assisted sites' PUBLIC (logged-out) search. Each enabled site gets the same query list as the LinkedIn guest
+# collector (searches.queries + the broad rotation + every user's roles) with its own per-run request budget,
+# polite delays and an app_settings cooldown (`<site>_public_cooldown_until`, 2 h doubling to 48 h) recorded on
+# a 403/406/429/Cloudflare block, so a blocked site is skipped on the following runs. `hours_old` defaults to
+# the top-level value; `max_results` is per query. Applying on these sites needs a cookie-import login
+# (Settings -> Sites -> Connect, or `jobapply sites import-cookies`); searching does not.
+assisted:
+  naukri:
+    enabled: false           # the logged-out JSON API answered "recaptcha required" (HTTP 406) from this
+                             # machine on 2026-10-29; enable to retry (one request, then a cooldown on a block)
+    location: ""
+    max_results: 40
+    max_requests: 30
+  instahyre:
+    enabled: true            # GET /api/v1/job_search + opportunity pages; location filtered client-side
+    location: ""
+    max_results: 40
+    max_requests: 40
+    with_details: true       # opportunity page per job (description, posted date); max_details per run
+    max_details: 20
+  cutshort:
+    enabled: true            # public hub endpoint (/backend-api/webpage/jobs/<topic>-jobs), CDN-cached 4 h
+    location: ""
+    max_results: 50
+    max_requests: 40
+    remote_only: false
+    hub_slugs: []            # explicit hubs, e.g. [python-jobs, remote-backend-developer-jobs]
+  wellfound:
+    enabled: true            # public /role/<slug> landing pages; queries outside Wellfound's role taxonomy 404
+    location: ""
+    max_results: 40
+    max_requests: 40
+    remote_only: false
+    max_pages: 3

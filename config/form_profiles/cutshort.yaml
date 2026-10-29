@@ -1,0 +1,44 @@
+# Cutshort (cutshort.io/job/<slug>): a logged-in one-click "Apply to this job", sometimes followed by a
+# screening questionnaire in a dialog. The filler in jobapply.sites.cutshort.apply uses this profile for the
+# questionnaire: `fields` map question labels to vault keys (anything else goes to the answer bank / LLM),
+# `submit` is the questionnaire's final button and `success` the markers of a sent application.
+#
+# The Apply button itself is the final, irreversible action on jobs without a questionnaire, so the filler
+# never clicks it in a dry run or while the site's auto-submit is off: it is NOT listed as a `steps` click.
+# The generic FormRunner must not run on these pages either (the wiring adds "cutshort" to ASSISTED_SITES).
+# Selectors are fixture-only until a logged-in session confirms the live questionnaire markup (docs/sites/CUTSHORT.md).
+ats: cutshort
+detect: "cutshort\\.io/(job/|profile/all-jobs|apply/)"
+fields:
+  "label=notice period": profile.notice_period
+  "label=joining": profile.notice_period
+  "label=current ctc": profile.current_ctc
+  "label=current salary": profile.current_ctc
+  "label=expected ctc": profile.expected_ctc
+  "label=expected salary": profile.expected_ctc
+  "label=total experience": profile.years_experience
+  "label=years of experience": profile.years_experience
+  "label=current company": profile.current_company
+  "label=current location": profile.location
+  "label=phone": profile.phone
+  "label=mobile": profile.phone
+  "label=email": profile.email
+  "label=linkedin": profile.linkedin
+  "label=github": profile.github
+  "label=portfolio": profile.portfolio
+  "label=relocat": derived.willing_to_relocate
+  "label=cover": derived.cover_letter
+  "label=why do you want": derived.cover_letter
+  "input[type=file]": derived.resume_path
+submit: 'button[type=submit]:has-text("Submit"), button:has-text("Submit application"), button:has-text("Submit answers"), button:has-text("Submit"), button:has-text("Send application")'
+# Plain CSS (Playwright's :has-text / :text-matches) only: the filler joins these with commas.
+success:
+  - 'p:text-matches("application (sent|submitted|received)", "i")'
+  - 'div:text-matches("^\s*application (sent|submitted|received)", "i")'
+  - 'span:text-matches("application (sent|submitted|received)", "i")'
+  - 'p:text-matches("successfully applied|you have applied", "i")'
+  - 'span:text-matches("successfully applied|you have applied", "i")'
+  - 'button:has-text("Applied")'
+never:
+  - "input[name=search]"
+  - "input[type=search]"

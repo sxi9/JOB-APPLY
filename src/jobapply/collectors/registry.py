@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import importlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -25,9 +28,45 @@ from jobapply.collectors.hn import HNWhoIsHiringCollector
 from jobapply.collectors.jobspy_adapter import JOBSPY_SITES, JobSpyCollector
 from jobapply.config import Settings, get_settings
 from jobapply.logs import get_logger
+from jobapply.sites.cutshort.search import PUBLIC_COOLDOWN_KEY as CUTSHORT_COOLDOWN_KEY
+from jobapply.sites.cutshort.search import CutshortCollector
+from jobapply.sites.instahyre.search import InstahyreCollector
 from jobapply.sites.linkedin.search import DEFAULT_MAX_REQUESTS, LinkedInGuestCollector
+from jobapply.sites.naukri.search import NaukriCollector
+from jobapply.sites.wellfound.search import GUEST_COOLDOWN_KEY as WELLFOUND_COOLDOWN_KEY
+from jobapply.sites.wellfound.search import WellfoundCollector
 
 log = get_logger(__name__)
+
+# Assisted sites with a logged-out (public) search collector. All share the uniform constructor
+# `(queries, location, hours_old, max_results, max_requests, user_id, skip_if=, on_rate_limited=)`.
+ASSISTED_COLLECTORS: dict[str, type[BaseCollector]] = {
+    "naukri": NaukriCollector,
+    "instahyre": InstahyreCollector,
+    "cutshort": CutshortCollector,
+    "wellfound": WellfoundCollector,
+}
+# Per-site keyword options the `assisted:` block may carry on top of the shared ones (passed through as-is; a
+# value the collector rejects disables that site's search only, see assisted_collectors). Naukri's `user_id`
+# is deliberately NOT accepted here: the shared pool must never run inside one user's logged-in profile (that
+# user would absorb any CAPTCHA for everyone's search); the browser fallback stays a per-user CLI affair.
+ASSISTED_EXTRAS: dict[str, tuple[str, ...]] = {
+    "naukri": ("api", "browser_fallback"),
+    "instahyre": ("job_type", "years", "with_details", "max_details"),
+    "cutshort": ("remote_only", "hub_slugs"),
+    "wellfound": ("remote_only", "with_details", "max_details", "max_pages"),
+}
+# app_settings key per site holding the public-search cooldown (`<site>_..._cooldown_until`, ISO datetime), the
+# same mechanism as `linkedin_guest_cooldown_until`. Cutshort and Wellfound keep the key their module defines.
+ASSISTED_COOLDOWN_KEYS: dict[str, str] = {
+    "naukri": "naukri_public_cooldown_until",
+    "instahyre": "instahyre_public_cooldown_until",
+    "cutshort": CUTSHORT_COOLDOWN_KEY,
+    "wellfound": WELLFOUND_COOLDOWN_KEY,
+}
+ASSISTED_DEFAULT_MAX_REQUESTS = 40  # per site per run (the collectors' own default)
+ASSISTED_DEFAULT_COOLDOWN_HOURS = 2.0
+ASSISTED_MAX_COOLDOWN_HOURS = 48.0
 
 FEED_COLLECTORS: dict[str, type[BaseCollector]] = {
     "remotive": RemotiveCollector,
@@ -60,6 +99,9 @@ class SearchConfig:
     linkedin: dict[str, Any] = field(default_factory=dict)
     # Hot-polling tier (see hot_collectors): {companies: [...], linkedin: true, linkedin_minutes_old: 15}.
     hot: dict[str, Any] = field(default_factory=dict)
+    # Assisted sites' public search: {naukri: {enabled, location, hours_old, max_results, max_requests, ...},
+    # instahyre: {...}, cutshort: {...}, wellfound: {...}} (see ASSISTED_COLLECTORS / config/searches.yaml).
+    assisted: dict[str, Any] = field(default_factory=dict)
     # Breadth mode: when true (default) the query-based collectors (LinkedIn guest, keyed aggregators) run
     # over the whole taxonomy (roles.search_queries()) instead of only the active users' roles, so the
     # shared pool covers every sector. A rotating slice of `broad_queries_per_run` queries runs each time
@@ -107,6 +149,133 @@ def _record_guest_cooldown(hours: float) -> None:
     with session_scope() as session:
         until = set_guest_cooldown(session, hours)
     log.warning("linkedin guest search paused", until=until.isoformat())
+
+
+# --- Assisted sites' public search ----------------------------------------------------------------------
+
+
+def assisted_options(site: str, raw: dict[str, Any] | None, default_hours_old: int = 24) -> dict[str, Any] | None:
+    """Validated keyword arguments for one assisted site's collector from its `assisted.<site>:` block, or None
+    when the block is off, unknown or malformed (logged; every other collector still runs)."""
+    if site not in ASSISTED_COLLECTORS:
+        log.warning("unknown assisted site in searches.yaml, ignored", site=site)
+        return None
+    block = raw or {}
+    if not isinstance(block, dict) or not block.get("enabled"):
+        return None
+    opts: dict[str, Any] = {"location": str(block.get("location") or "")}
+    ints = {"hours_old": default_hours_old, "max_results": 50, "max_requests": ASSISTED_DEFAULT_MAX_REQUESTS}
+    for key, default in ints.items():
+        value = block.get(key)
+        try:
+            opts[key] = int(value) if value not in (None, "") else int(default)
+        except (TypeError, ValueError):
+            log.warning("bad assisted setting in searches.yaml, site search disabled", site=site, key=key,
+                        value=value)
+            return None
+    for key in ASSISTED_EXTRAS.get(site, ()):
+        if key in block and block[key] is not None:
+            opts[key] = block[key]
+    return opts
+
+
+def assisted_cooldown_until(session: Any, site: str) -> datetime | None:
+    from jobapply.switches import get_value
+
+    key = ASSISTED_COOLDOWN_KEYS.get(site)
+    raw = get_value(session, key) if key else None
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(raw))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def assisted_cooldown_active(session: Any, site: str, now: datetime | None = None) -> bool:
+    """True while `site`'s public scraper should stay away: its own cooldown (a block seen on an earlier run) or
+    any active user's challenge cooldown on that site (the apply path hit a captcha from this IP)."""
+    from sqlmodel import select
+
+    from jobapply.models import User
+
+    now = now or datetime.now(UTC)
+    until = assisted_cooldown_until(session, site)
+    if until and until > now:
+        return True
+    try:
+        session_mod = importlib.import_module(f"jobapply.sites.{site}.session")
+        cooldown_until = session_mod.cooldown_until
+    except (ImportError, AttributeError):
+        return False
+    for user in session.exec(select(User).where(User.is_active)).all():
+        user_until = cooldown_until(user)
+        if user_until and user_until > now:
+            return True
+    return False
+
+
+def set_assisted_cooldown(session: Any, site: str, hours: float = ASSISTED_DEFAULT_COOLDOWN_HOURS,
+                          now: datetime | None = None) -> datetime:
+    """Record a public-search cooldown for `site`, doubling while the previous one is still active, 48 h cap."""
+    from jobapply.switches import set_value
+
+    now = now or datetime.now(UTC)
+    previous = assisted_cooldown_until(session, site)
+    if previous and previous > now:
+        remaining = (previous - now).total_seconds() / 3600
+        hours = max(hours, remaining * 2)
+    until = now + timedelta(hours=min(float(hours), ASSISTED_MAX_COOLDOWN_HOURS))
+    set_value(session, ASSISTED_COOLDOWN_KEYS[site], until.isoformat())
+    return until
+
+
+def _assisted_skip(site: str) -> Callable[[], bool]:
+    def skip() -> bool:
+        from jobapply.db import session_scope
+
+        with session_scope() as session:
+            return assisted_cooldown_active(session, site)
+
+    return skip
+
+
+def _assisted_block(site: str) -> Callable[[float], None]:
+    def record(hours: float) -> None:
+        from jobapply.db import session_scope
+
+        with session_scope() as session:
+            until = set_assisted_cooldown(session, site, hours)
+        log.warning("public search paused", site=site, until=until.isoformat())
+
+    return record
+
+
+def assisted_collectors(searches: SearchConfig, queries: list[str],
+                        skip_if: Callable[[str], Callable[[], bool]] | None = None,
+                        on_rate_limited: Callable[[str], Callable[[float], None]] | None = None,
+                        ) -> list[BaseCollector]:
+    """One collector per enabled site in the `assisted:` block, fed the same query list as the LinkedIn guest
+    collector. Each gets the site's own cooldown hooks (`skip_if` / `on_rate_limited`)."""
+    out: list[BaseCollector] = []
+    if not queries:
+        return out
+    for site, cls in ASSISTED_COLLECTORS.items():
+        opts = assisted_options(site, (searches.assisted or {}).get(site), searches.hours_old)
+        if not opts:
+            continue
+        try:
+            collector = cls(list(queries), skip_if=(skip_if or _assisted_skip)(site),
+                            on_rate_limited=(on_rate_limited or _assisted_block)(site), **opts)
+        except (TypeError, ValueError) as exc:
+            # a per-site extra the collector rejects (unknown job_type, non-int years / max_pages ...) must
+            # disable this site only, never abort the whole collect run
+            log.warning("bad assisted settings in searches.yaml, site search disabled", site=site,
+                        keys=sorted(k for k in opts if k in ASSISTED_EXTRAS.get(site, ())), error=str(exc)[:200])
+            continue
+        out.append(collector)
+    return out
 
 
 def load_companies(path: Path) -> list[Company]:
@@ -188,6 +357,7 @@ def build_collectors(
                 queries, minutes_old=minutes_old, shuffle_queries=True,
                 skip_if=_guest_cooldown_active, on_rate_limited=_record_guest_cooldown, **li,
             ))
+        out.extend(assisted_collectors(searches, queries))
     if only:
         out = [c for c in out if c.source in only or c.key in only]
     return out

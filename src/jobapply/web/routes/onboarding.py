@@ -6,9 +6,10 @@ fields and the master-resume paste go through `profile.profile_save`, the resume
 fields it owns, merged over the user's existing `filters` (see `ob_roles`): it must NOT reuse
 `settings.save_filters` wholesale, because that route rebuilds the entire `UserFilters` from its (full)
 form and would wipe keywords / seniority / blocklist / age for anyone who re-posts this partial step. The
-only thing unique to this router is the per-user LinkedIn cookie connect step and the final "onboarded"
-flag; both stay scoped to `ctx.view`, so one user can never touch another's data. Works with no LLM key
-and headless only.
+only thing unique to this router is the per-user "Connect <site>" cookie step (LinkedIn, Naukri, Instahyre,
+Cutshort, Wellfound: the same `settings.connect_user_site` flow the Settings page uses) and the final
+"onboarded" flag; both stay scoped to `ctx.view`, so one user can never touch another's data. Works with no
+LLM key and headless only.
 """
 
 from __future__ import annotations
@@ -16,21 +17,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from jobapply.config import get_settings
-from jobapply.models import utcnow
 from jobapply.pipeline.filters import UserFilters, assign_jobs
 from jobapply.roles import all_fields
-from jobapply.sites import browser
+from jobapply.sites import connect
 from jobapply.web.deps import Ctx, as_list, flash, get_ctx, read_form, split_lines
 from jobapply.web.routes.profile import PROFILE_FIELDS, missing_fields, profile_save, resume_file_upload
+from jobapply.web.routes.settings import connect_user_site, read_cookie_export
 
 router = APIRouter()
 
-# Order the wizard walks through. Each POST saves its step and redirects to the next one.
+# Order the wizard walks through. Each POST saves its step and redirects to the next one. The last step is the
+# generic "Connect <site>" page (its name is kept for existing links).
 STEPS = ["basics", "eligibility", "roles", "resume", "answers", "linkedin"]
+CONNECT_SITES = list(connect.SITES)
 _FIELD_MAP = {key: (label, kind) for key, label, kind in PROFILE_FIELDS}
 
 
@@ -52,7 +54,12 @@ def onboarding_page(step: str = "basics", ctx: Ctx = Depends(get_ctx)):
         step = STEPS[0]
     profile = ctx.view.profile or {}
     filters = ctx.view.filters or {}
-    site = ctx.scope.site("linkedin")
+    rows = {s.site: s for s in ctx.scope.sites()}
+    connect_sites = [
+        {"site": name, "label": connect.label(name), "domains": ", ".join(connect.COOKIE_DOMAINS[name]),
+         "status": rows[name].login_status if name in rows else "unknown"}
+        for name in CONNECT_SITES
+    ]
     resume_file = str(profile.get("resume_file") or "")
     return ctx.render(
         "onboarding.html",
@@ -65,7 +72,8 @@ def onboarding_page(step: str = "basics", ctx: Ctx = Depends(get_ctx)):
         role_selected=set(filters.get("role_selection") or []),
         missing=missing_fields(profile),
         resume_file_name=Path(resume_file).name if resume_file else "",
-        linkedin_status=(site.login_status if site else "unknown"),
+        connect_sites=connect_sites,
+        linkedin_status=connect_sites[0]["status"],
     )
 
 
@@ -125,47 +133,30 @@ async def ob_answers(request: Request, ctx: Ctx = Depends(get_ctx)):
     return _to("linkedin")
 
 
-@router.post("/onboarding/linkedin")
-async def ob_linkedin(request: Request, ctx: Ctx = Depends(get_ctx)):
-    """Import this user's own LinkedIn cookie export into their isolated browser profile and report status.
+@router.post("/onboarding/connect/{site}")
+async def ob_connect(site: str, request: Request, ctx: Ctx = Depends(get_ctx)):
+    """Import this user's own cookie export for `site` into their isolated browser profile and report status.
 
-    The uploaded JSON is written under the git-ignored per-user data dir, never into the repo, and the
-    import runs headless via `sites.browser.import_cookies_file` (which keys the profile by user id).
+    The uploaded JSON is written under the git-ignored per-user data dir (`data/cookies/<user id>/<site>.json`),
+    never into the repo, and imported headless via `sites.connect` (which keys the profile by user id). Sites
+    with a session checker (Naukri, Instahyre, Cutshort, Wellfound) are verified right away.
     """
     form = await read_form(request)
-    upload = form.get("file")
-    pasted = str(form.get("cookies_json") or "").strip()
-    raw: str | None = None
-    if upload is not None and getattr(upload, "filename", ""):
-        raw = (await upload.read()).decode("utf-8-sig", errors="replace")
-    elif pasted:
-        raw = pasted
+    if not connect.is_site(site):
+        raise HTTPException(404)
+    raw = await read_cookie_export(request, form)
     if not raw:
-        flash(request, "Upload or paste your LinkedIn cookie export first.", "error")
+        flash(request, f"Upload or paste your {connect.label(site)} cookie export first.", "error")
         return _to("linkedin")
-
-    folder = get_settings().data_dir / "cookies" / str(ctx.view.id)
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / "linkedin.json"
-    path.write_text(raw, encoding="utf-8")
-
-    site = ctx.scope.site("linkedin")
-    try:
-        count = browser.import_cookies_file(ctx.view.id, "linkedin", path)
-    except Exception as exc:  # noqa: BLE001 - bad export / expired cookies / playwright error
-        if site is not None:
-            site.login_status = "expired"
-            ctx.session.add(site)
-            ctx.session.commit()
-        flash(request, f"Could not connect LinkedIn: {str(exc).splitlines()[0]}", "error")
-        return _to("linkedin")
-    if site is not None:
-        site.login_status = "ok"
-        site.last_login_at = utcnow()
-        ctx.session.add(site)
-        ctx.session.commit()
-    flash(request, f"LinkedIn connected. Imported {count} cookies into your private profile.")
+    ok, message = connect_user_site(ctx, site, raw)
+    flash(request, message, "ok" if ok else "error")
     return _to("linkedin")
+
+
+@router.post("/onboarding/linkedin")
+async def ob_linkedin(request: Request, ctx: Ctx = Depends(get_ctx)):
+    """The original LinkedIn-only step, kept as an alias of `/onboarding/connect/linkedin`."""
+    return await ob_connect("linkedin", request, ctx)
 
 
 @router.post("/onboarding/done")

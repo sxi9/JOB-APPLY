@@ -94,7 +94,8 @@ def test_fingerprint_ignores_generated_ids_and_values():
 
 def test_builtin_profiles_load_and_detect():
     profiles = load_builtin_profiles(PROFILES)
-    assert set(profiles) == {"greenhouse", "lever", "ashby", "workable", "smartrecruiters"}
+    # cutshort.yaml is the Cutshort one-click filler's label map (sites/cutshort); it lives here too
+    assert set(profiles) == {"greenhouse", "lever", "ashby", "workable", "smartrecruiters", "cutshort"}
     for ats, url in URLS.items():
         assert profile_for_url(url, profiles).ats == ats, url
     assert profile_for_url("https://careers.example.com/apply", profiles) is None

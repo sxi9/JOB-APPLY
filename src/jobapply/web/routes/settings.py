@@ -9,6 +9,8 @@ from jobapply.config import get_settings
 from jobapply.models import Credential, UserSite, utcnow
 from jobapply.pipeline.filters import SENIORITY_ORDER, UserFilters
 from jobapply.roles import all_fields
+from jobapply.sites import connect
+from jobapply.users import SITES as SITE_DEFAULTS
 from jobapply.vault import Vault, VaultError, mask
 from jobapply.web.deps import Ctx, as_list, flash, get_ctx, read_form, split_lines
 from jobapply.web.routes.jobs import AGE_PRESETS
@@ -18,6 +20,53 @@ router = APIRouter()
 ALERT_TYPES = ["interview", "assessment", "paused", "failed", "daily_summary"]
 TONES = ["professional", "warm", "concise", "enthusiastic"]
 CREDENTIAL_KINDS = ["login", "imap", "smtp", "api_key"]
+
+
+def site_kind(site: str) -> str:
+    return str(SITE_DEFAULTS.get(site, {}).get("kind", "ats"))
+
+
+def connectable(site: str) -> bool:
+    """Sites whose login is a cookie import (the assisted ones): they get Connect / Check controls."""
+    return connect.is_site(site)
+
+
+async def read_cookie_export(request: Request, form: dict) -> str:
+    """The pasted or uploaded cookie-export text from a connect form, or '' when neither was given.
+
+    The Sites form carries one `file` input per connectable row, and a browser posts every untouched one as an
+    empty part (`filename=""`), so `file` may arrive as a list: the chosen export is the first part that has a
+    filename, wherever it sits in the form."""
+    uploads = form.get("file")
+    for upload in (uploads if isinstance(uploads, list) else [uploads]):
+        if upload is not None and getattr(upload, "filename", ""):
+            return (await upload.read()).decode("utf-8-sig", errors="replace")
+    return str(form.get("cookies_json") or "").strip()
+
+
+def connect_user_site(ctx: Ctx, site: str, raw: str) -> tuple[bool, str]:
+    """Save + import a cookie export for the viewed user and record the outcome on their site row.
+    Returns (ok, message). Never raises on a bad export; the row is marked `expired` then."""
+    row: UserSite | None = ctx.scope.site(site)
+    name = connect.label(site)
+    try:
+        result = connect.connect_site(ctx.view.id, site, raw, engine=ctx.request.app.state.engine)
+    except Exception as exc:  # noqa: BLE001 - bad export / expired cookies / playwright error
+        if row is not None:
+            row.login_status = "expired"
+            ctx.session.add(row)
+            ctx.session.commit()
+        return False, f"Could not connect {name}: {str(exc).splitlines()[0]}"
+    if row is not None:
+        row.login_status = result.login_status
+        if result.status == "ok":
+            row.last_login_at = utcnow()
+        ctx.session.add(row)
+        ctx.session.commit()
+    if result.status == "ok":
+        return True, f"{name} connected. Imported {result.count} cookies into your private profile."
+    return False, (f"{name}: imported {result.count} cookies, but the session check says {result.status}. "
+                   "Export the cookies again from a logged-in browser window and retry.")
 
 
 @router.get("/settings")
@@ -55,6 +104,9 @@ def settings_page(ctx: Ctx = Depends(get_ctx)):
         role_selected=set(filters.role_selection),
         prefs=prefs,
         sites=ctx.scope.sites(),
+        site_kind=site_kind,
+        connectable=connectable,
+        site_label=connect.label,
         creds=[c for c in creds if c.kind != "api_key"],
         mask=mask,
         seniority_levels=SENIORITY_ORDER,
@@ -117,6 +169,44 @@ async def relogin(site: str, request: Request, ctx: Ctx = Depends(get_ctx)):
     ctx.session.add(row)
     ctx.session.commit()
     flash(request, f"Re-login for {site} requested. The OTP flow runs on the apply worker.")
+    return RedirectResponse("/settings#sites", status_code=303)
+
+
+@router.post("/settings/sites/{site}/cookies")
+async def connect_cookies(site: str, request: Request, ctx: Ctx = Depends(get_ctx)):
+    """Connect an assisted site from a cookie export (file upload or pasted JSON). The export is written
+    under the per-user data dir and imported into the user's own headless browser profile; the sites with a
+    session checker are verified right away and the Login column shows the result."""
+    form = await read_form(request)
+    if not connectable(site) or ctx.scope.site(site) is None:
+        raise HTTPException(404)
+    raw = await read_cookie_export(request, form)
+    if not raw:
+        flash(request, f"Upload or paste your {connect.label(site)} cookie export first.", "error")
+        return RedirectResponse("/settings#sites", status_code=303)
+    ok, message = connect_user_site(ctx, site, raw)
+    flash(request, message, "ok" if ok else "error")
+    return RedirectResponse("/settings#sites", status_code=303)
+
+
+@router.post("/settings/sites/{site}/check")
+async def check_site(site: str, request: Request, ctx: Ctx = Depends(get_ctx)):
+    """Open the site headless with the saved profile and refresh the Login column."""
+    await read_form(request)
+    row: UserSite | None = ctx.scope.site(site)
+    if not connectable(site) or row is None:
+        raise HTTPException(404)
+    try:
+        status = connect.check_session_for(site, ctx.view.id, engine=ctx.request.app.state.engine)
+    except Exception as exc:  # noqa: BLE001 - playwright / profile trouble
+        flash(request, f"Could not check {connect.label(site)}: {str(exc).splitlines()[0]}", "error")
+        return RedirectResponse("/settings#sites", status_code=303)
+    row.login_status = "expired" if status == "login" else status
+    if status == "ok":
+        row.last_login_at = utcnow()
+    ctx.session.add(row)
+    ctx.session.commit()
+    flash(request, f"{connect.label(site)} session: {status}", "ok" if status == "ok" else "error")
     return RedirectResponse("/settings#sites", status_code=303)
 
 

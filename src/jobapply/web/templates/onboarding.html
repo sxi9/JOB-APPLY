@@ -113,25 +113,32 @@
   </form>
 
 {% elif step == 'linkedin' %}
-  <h2>Connect LinkedIn (optional)</h2>
+  <h2>Connect your job sites (optional)</h2>
   <p class="muted small">
-    Assisted sites reuse your own logged-in session. Export your LinkedIn cookies with a browser
-    extension (the common <code>cookies.json</code> array), then upload or paste it here. Your cookies are
-    stored only in your own private browser profile on this server, never in the repo and never shared with
-    other users.
+    Assisted sites (LinkedIn, Naukri, Instahyre, Cutshort, Wellfound) reuse your own logged-in session. Export
+    that site's cookies with a browser extension (the common <code>cookies.json</code> array), then upload or
+    paste it under the site. Your cookies are stored only in your own private browser profile on this server,
+    never in the repo and never shared with other users; nothing here types your password. Naukri, Instahyre,
+    Cutshort and Wellfound are checked right after the import (ok / expired / challenge); you can also connect
+    any of them later from Settings &rarr; Sites.
   </p>
-  <p>Current status: <span class="badge">{{ linkedin_status }}</span></p>
-  <form method="post" action="/onboarding/linkedin" enctype="multipart/form-data" class="row">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input type="file" name="file" accept=".json,application/json">
-    <button class="btn">Connect from file</button>
-  </form>
-  <form method="post" action="/onboarding/linkedin" style="margin-top:16px">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <div class="field"><label>Or paste the cookie JSON</label>
-      <textarea name="cookies_json" rows="6" class="mono" placeholder='[{"name": "li_at", "value": "...", "domain": ".linkedin.com"}]'></textarea></div>
-    <button class="btn">Connect from pasted JSON</button>
-  </form>
+  <p>LinkedIn status: <span class="badge">{{ linkedin_status }}</span></p>
+  {% for cs in connect_sites %}
+  <details class="card" style="margin-top:12px" {{ 'open' if loop.first }}>
+    <summary><strong>Connect {{ cs.label }}</strong> <span class="chip chip-{{ 'green' if cs.status == 'ok' else 'amber' if cs.status == 'unknown' else 'red' }}">{{ cs.status | label }}</span> <span class="muted small">cookies for {{ cs.domains }}</span></summary>
+    <form method="post" action="/onboarding/connect/{{ cs.site }}" enctype="multipart/form-data" class="row" style="margin-top:8px">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="file" name="file" accept=".json,application/json">
+      <button class="btn">Connect {{ cs.label }} from file</button>
+    </form>
+    <form method="post" action="/onboarding/connect/{{ cs.site }}" style="margin-top:8px">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="field"><label>Or paste the {{ cs.label }} cookie JSON</label>
+        <textarea name="cookies_json" rows="4" class="mono" placeholder='[{"name": "...", "value": "...", "domain": ".{{ cs.domains.split(', ')[0] }}"}]'></textarea></div>
+      <button class="btn">Connect {{ cs.label }} from pasted JSON</button>
+    </form>
+  </details>
+  {% endfor %}
   <form method="post" action="/onboarding/done" style="margin-top:24px">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <button class="btn btn-primary">Finish setup</button>
