@@ -136,7 +136,7 @@ def ensure_resume_variant(session: Session, llm: LLM, user: User, job: Job, forc
     variant = tailor_resume(session, llm, user, job)
     basics = prompts.master_resume(user).get("basics", {})
     render_resume_pdf(basics, variant, path)
-    path.with_suffix(".json").write_text(variant.model_dump_json(indent=1))
+    path.with_suffix(".json").write_text(variant.model_dump_json(indent=1), encoding="utf-8")
     return path
 
 

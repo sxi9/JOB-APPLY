@@ -7,7 +7,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def load_fixture(name: str):
-    return json.loads((FIXTURES / "collectors" / name).read_text())
+    return json.loads((FIXTURES / "collectors" / name).read_text(encoding="utf-8"))
 
 
 def fixture_client(routes: dict[str, str | dict | list], log: list | None = None) -> httpx.Client:

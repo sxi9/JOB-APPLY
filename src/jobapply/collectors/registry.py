@@ -58,20 +58,20 @@ class SearchConfig:
 def load_companies(path: Path) -> list[Company]:
     if not path.exists():
         return []
-    data = yaml.safe_load(path.read_text()) or {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return [Company(**c) for c in data.get("companies", [])]
 
 
 def save_companies(path: Path, companies: list[Company]) -> None:
     rows = [{k: v for k, v in c.__dict__.items() if v} for c in companies]
     header = "# Target companies. `jobapply detect-companies` fills in ats and slug from careers_url.\n"
-    path.write_text(header + yaml.safe_dump({"companies": rows}, sort_keys=False, allow_unicode=True))
+    path.write_text(header + yaml.safe_dump({"companies": rows}, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
 def load_searches(path: Path) -> SearchConfig:
     if not path.exists():
         return SearchConfig()
-    data = yaml.safe_load(path.read_text()) or {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return SearchConfig(**data)
 
 

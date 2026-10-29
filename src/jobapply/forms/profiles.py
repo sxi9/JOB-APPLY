@@ -52,7 +52,7 @@ def load_builtin_profiles(folder: Path) -> dict[str, FormProfileSpec]:
     if not folder.exists():
         return out
     for path in sorted(folder.glob("*.yaml")):
-        data = yaml.safe_load(path.read_text()) or {}
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         spec = FormProfileSpec.model_validate({"origin": "builtin", **data})
         out[spec.ats] = spec
     return out
