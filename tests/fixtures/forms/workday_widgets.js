@@ -29,7 +29,7 @@ window.wdWidgets = (function () {
     o = o || {};
     const chips = (o.chips || []).map(chipHtml).join('');
     const inner = `<div data-automation-id="multiSelectContainer" data-wd="prompt" data-tree="${attr(tree)}">` +
-      `<div data-automation-id="selectedItemList">${chips}</div>` +
+      `<ul data-automation-id="selectedItemList" role="listbox">${chips}</ul>` +
       `<input type="text" id="${auto}--${auto}" name="${auto}" placeholder="Search" autocomplete="off" aria-expanded="false"` +
       `${o.required ? ' aria-required="true"' : ''}>` +
       `<div class="wd-popup" data-automation-id="promptPopup" hidden></div></div>`;
@@ -37,15 +37,21 @@ window.wdWidgets = (function () {
   }
 
   function chipHtml(text) {
-    return `<div data-automation-id="selectedItem"><span>${esc(text)}</span>` +
-      `<button type="button" aria-label="Remove ${esc(text)}"><svg width="8" height="8"></svg></button></div>`;
+    // Live chips are promptOption rows too (selectedItemList > li.menuItem > div.selectedItem > p.promptOption).
+    return `<li data-automation-id="menuItem" role="presentation"><div data-automation-id="selectedItem" role="option">` +
+      `<p data-automation-id="promptOption"><span>${esc(text)}</span></p>` +
+      `<button type="button" aria-label="Remove ${esc(text)}"><svg width="8" height="8"></svg></button></div></li>`;
   }
 
   // radioHtml("Have you ... intern?", "previousWorker", ["Yes", "No"], {required: true})
   function radioHtml(question, name, options, o) {
     o = o || {};
-    const rows = options.map((opt, i) => `<div><input type="radio" id="${name}-${i}" name="${name}" value="${esc(opt)}"` +
-      `${o.required ? ' required' : ''}><label for="${name}-${i}">${esc(opt)}</label></div>`).join('');
+    // styled: the input is covered by a span like Workday's (a pointer click on the input is intercepted)
+    const cover = o.styled ? '<span style="position:absolute;inset:0;background:#fff;border:1px solid #888;border-radius:50%"></span>' : '';
+    const rows = options.map((opt, i) => `<div><span style="position:relative;display:inline-block;width:16px;height:16px">` +
+      `<input type="radio" id="${name}-${i}" name="${name}" value="${esc(opt)}"${o.required ? ' required' : ''}` +
+      `${o.styled ? ' style="position:absolute;inset:0;margin:0;opacity:0"' : ''}>${cover}</span>` +
+      `<label for="${name}-${i}">${esc(opt)}</label></div>`).join('');
     return `<div data-automation-id="formField-${name}"><fieldset><legend>${question}</legend>` +
       `<div role="radiogroup">${rows}</div></fieldset></div>`;
   }
@@ -116,7 +122,12 @@ window.wdWidgets = (function () {
     Array.from(pop.querySelectorAll('[data-automation-id="promptOption"]')).forEach((row, i) => {
       row.addEventListener('click', () => {
         const e = entries[i];
-        if (isCat(e)) { st.path.push(nameOf(e)); st.query = ''; renderPrompt(box); return; }
+        if (isCat(e)) {  // live Workday loads the level a moment later
+          st.path.push(nameOf(e)); st.query = '';
+          pop.innerHTML = '<div class="wd-notice">Loading...</div>';
+          setTimeout(() => renderPrompt(box), 600);
+          return;
+        }
         const list = box.querySelector('[data-automation-id="selectedItemList"]');
         if (!Array.from(list.querySelectorAll('[data-automation-id="selectedItem"] span')).some(s => s.textContent === e)) {
           list.insertAdjacentHTML('beforeend', chipHtml(e));
@@ -140,7 +151,7 @@ window.wdWidgets = (function () {
     for (const b of box.querySelectorAll('[data-automation-id="selectedItem"] button')) {
       if (b._wired) continue;
       b._wired = true;
-      b.addEventListener('click', () => b.closest('[data-automation-id="selectedItem"]').remove());
+      b.addEventListener('click', () => (b.closest('[data-automation-id="menuItem"]') || b.closest('[data-automation-id="selectedItem"]')).remove());
     }
   }
 

@@ -51,7 +51,7 @@ document.getElementById('content').innerHTML =
   text('Phone Number', 'phone--phoneNumber', 'phoneNumber', true) +
   W.promptHtml('How Did You Hear About Us?' + REQ, 'source', __SOURCE_TREE__, {required: true}) +
   __EXTRA__
-  W.radioHtml(__LONG_Q__ + REQ, 'previousWorker', ['Yes', 'No'], {required: true});
+  W.radioHtml(__LONG_Q__ + REQ, 'previousWorker', ['Yes', 'No'], {required: true, styled: true});
 W.wire(document);
 </script></body></html>"""
 

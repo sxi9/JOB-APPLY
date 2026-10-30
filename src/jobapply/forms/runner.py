@@ -635,7 +635,8 @@ class FormRunner:
         if expanded != "false":
             candidates += [
                 page.locator('[id$="-listbox"]:visible'),
-                page.locator("[role=listbox]:visible"),
+                # not a multi-select prompt's chip list (Workday renders the chosen chips as a role=listbox too)
+                page.locator('[role=listbox]:not([data-automation-id="selectedItemList"]):visible'),
                 page.locator('[class*="menu-list"]:visible, .pac-container:visible'),
             ]
         for cand in candidates:
@@ -773,7 +774,7 @@ class FormRunner:
         if opts is not None:
             return opts
         try:
-            rows = page.locator(f"{self.MENU_ITEM_ROWS}:visible")
+            rows = page.locator(f'{self.MENU_ITEM_ROWS}:not([data-automation-id="selectedItemList"] *):visible')
             if rows.count():
                 return rows
         except Exception:  # noqa: BLE001 - popup re-rendered under us
@@ -867,8 +868,10 @@ class FormRunner:
             return []
 
     def _prompt_rows(self, page):
+        """The popup's rows. Live Workday renders the chosen chips as promptOption rows too (inside
+        selectedItemList), so those are excluded; the popup's own rows sit under activeListContainer."""
         try:
-            rows = page.locator(f"{self.PROMPT_ROWS}:visible")
+            rows = page.locator(f'{self.PROMPT_ROWS}:not([data-automation-id="selectedItemList"] *):visible')
             return rows if rows.count() else None
         except Exception:  # noqa: BLE001
             return None
@@ -894,6 +897,26 @@ class FormRunner:
             log.debug("prompt options not read", selector=f.selector, error=str(exc)[:120])
         self._close(loc)
         return [o for o in opts if o]
+
+    def _after_row_click(self, page, f: FormField, finder, before: list[str]) -> list[str] | None:
+        """What a prompt row click did, waited for: None once a chip exists, else the row texts once they differ
+        from `before` (a category opened; live Workday loads the level a second or two later), else `before`."""
+        deadline = time.monotonic() + self.LISTBOX_WAIT_MS / 1000
+        while True:
+            if self._chips(page, f):
+                return None
+            rows = finder()
+            texts: list[str] = []
+            if rows is not None:
+                try:
+                    texts = [re.sub(r"\s+", " ", t).strip() for t in rows.all_inner_texts()]
+                except Exception:  # noqa: BLE001 - re-rendered under us
+                    texts = []
+            if texts and texts != before:
+                return texts
+            if time.monotonic() >= deadline:
+                return before
+            page.wait_for_timeout(self.LISTBOX_POLL_MS)
 
     def _fill_multiselect(self, page, p: PlannedFill) -> str:
         """Workday multi-select prompt. Chips already present are kept (Country Phone Code comes pre-filled).
@@ -931,10 +954,9 @@ class FormRunner:
             except Exception as exc:  # noqa: BLE001 - re-rendered menu
                 log.debug("prompt option click failed", selector=f.selector, error=str(exc)[:120])
                 break
-            page.wait_for_timeout(250)
-            if self._chips(page, f):
-                break
-            after = self._wait_rows(page, finder, self.LISTBOX_WAIT_MS // 3)
+            after = self._after_row_click(page, f, finder, options)
+            if after is None:
+                break  # a chip appeared
             if after == options:
                 break  # the click changed nothing: not a category and no chip
             options = after  # a category opened: look one level down
@@ -949,6 +971,25 @@ class FormRunner:
         if not any(self._shows(c, text, "") for c in chips):
             return f"picked {p.value!r} for {text!r}, review it"
         return ""
+
+    @staticmethod
+    def _set_checked(page, selector: str, want: bool) -> None:
+        """Check / uncheck a radio or checkbox. Workday (and most styled forms) hide the input under a span, so a
+        pointer click on it is intercepted: fall back to its label, then to a DOM click, and verify the state."""
+        loc = page.locator(selector).first
+        try:
+            loc.set_checked(want, timeout=3000)
+            return
+        except Exception as exc:  # noqa: BLE001 - covered input
+            log.debug("set_checked fell back", selector=selector, error=str(exc)[:100])
+        if loc.is_checked() != want:
+            loc.evaluate("e => { const l = (e.labels && e.labels[0]); (l || e).click(); }")
+            page.wait_for_timeout(150)
+        if loc.is_checked() != want:
+            loc.evaluate("e => e.click()")
+            page.wait_for_timeout(150)
+        if loc.is_checked() != want:
+            raise ValueError("could not set the choice")
 
     def _fill_one(self, page, p: PlannedFill, fields: list[FormField], result: FillResult | None = None) -> None:
         f = p.field
@@ -990,7 +1031,7 @@ class FormRunner:
                 want_checked = p.value
             elif len(group) == 1 and isinstance(p.value, str):
                 want_checked = p.value.strip().lower() in ("yes", "true", "1", "y")
-            page.locator(target.selector).first.set_checked(want_checked)
+            self._set_checked(page, target.selector, want_checked)
             p.value = opt if want_checked else "unchecked"
             return
         if p.value is None:
