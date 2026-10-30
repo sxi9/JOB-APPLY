@@ -359,11 +359,15 @@ class WorkdayAccount:
     def _settle(self) -> None:
         self._pause(self.page, self.settle_ms // 2, self.settle_ms)
 
-    def _wait_state(self, timeout_ms: int = 20_000, poll_ms: int = 500) -> str:
-        """Poll ``classify_page`` until it is decisive (the SPA renders client-side)."""
+    def _wait_state(self, timeout_ms: int = 20_000, poll_ms: int = 500, leaving: str | None = None) -> str:
+        """Poll ``classify_page`` until it is decisive (the SPA renders client-side). With ``leaving`` (the state
+        a form was just submitted from) keep polling while the page still shows that state and no error banner,
+        so a slow server round-trip is not read as a rejection."""
         waited = 0
         state = self.state()
-        while state == STATE_UNKNOWN and waited < timeout_ms:
+        while waited < timeout_ms and (
+            state == STATE_UNKNOWN or (leaving is not None and state == leaving and not page_error(self.page, self.sel))
+        ):
             self.page.wait_for_timeout(poll_ms)
             waited += poll_ms
             state = self.state()
@@ -382,28 +386,54 @@ class WorkdayAccount:
         return False
 
     def _click(self, key: str, timeout: int | None = None) -> bool:
-        """Click a control. Workday's submit buttons sit under a click-filter cover (``aria-hidden``,
-        ``tabindex=-2``), so a pointer click can time out on a visible, enabled button; then the element is
-        clicked from the DOM, and as a last resort Enter is pressed in the active field."""
         loc = _visible(self.page, self.sel[key])
         if loc is None:
             return False
-        timeout = self.click_timeout_ms if timeout is None else timeout
-        try:
-            loc.click(timeout=timeout)
-            return True
-        except Exception as exc:  # noqa: BLE001 - intercepted / covered control
-            log.info("workday pointer click fell back to a DOM click", control=key, error=str(exc)[:80])
-        try:
-            loc.evaluate("e => e.click()")
-            return True
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            self.page.keyboard.press("Enter")
-            return True
-        except Exception:  # noqa: BLE001
+        loc.click(timeout=self.click_timeout_ms if timeout is None else timeout)
+        return True
+
+    def _left(self, leaving: str, wait_ms: int = 2_500, poll_ms: int = 250) -> bool:
+        """True once the page no longer shows ``leaving`` (or shows an error banner) within ``wait_ms``."""
+        waited = 0
+        while waited <= wait_ms:
+            if self.state() != leaving or page_error(self.page, self.sel):
+                return True
+            self.page.wait_for_timeout(poll_ms)
+            waited += poll_ms
+        return False
+
+    def _submit(self, key: str, leaving: str) -> bool:
+        """Click a submit control and make sure the submit took. Workday's submit buttons sit under a click-filter
+        cover (``aria-hidden``, ``tabindex=-2``), so a pointer click may time out or land on the cover without
+        reaching the handler; each strategy is tried in turn until the page leaves ``leaving``: pointer click,
+        forced click, a raw mouse click at the button's centre, a DOM click, then Enter in the focused field."""
+        loc = _visible(self.page, self.sel[key])
+        if loc is None:
             return False
+        try:
+            loc.click(timeout=self.click_timeout_ms)
+            if self._left(leaving):
+                return True
+        except Exception as exc:  # noqa: BLE001 - intercepted / covered control
+            log.info("workday pointer click did not take, trying fallbacks", control=key, error=str(exc)[:80])
+        for attempt in ("force", "mouse", "dom", "enter"):
+            try:
+                if attempt == "force":
+                    loc.click(force=True, timeout=min(self.click_timeout_ms, 3_000))
+                elif attempt == "mouse":
+                    box = loc.bounding_box()
+                    if not box:
+                        continue
+                    self.page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+                elif attempt == "dom":
+                    loc.evaluate("e => e.click()")
+                else:
+                    self.page.keyboard.press("Enter")
+            except Exception:  # noqa: BLE001
+                continue
+            if self._left(leaving):
+                return True
+        return True  # something was clicked; the caller's state wait reports what came of it
 
     def _fill(self, key: str, value: str) -> bool:
         loc = _visible(self.page, self.sel[key])
@@ -470,10 +500,10 @@ class WorkdayAccount:
             return self.state()
         self._pause(self.page, 300, 800)
         self.started_at = utcnow()
-        if not self._click("sign_in_submit"):
+        if not self._submit("sign_in_submit", STATE_LOGIN):
             _visible(self.page, self.sel["password"]).press("Enter")
         self._settle()
-        state = self._wait_state()
+        state = self._wait_state(leaving=STATE_LOGIN)
         if state == STATE_LOGIN:
             err = page_error(self.page, self.sel)
             log.warning("workday sign-in rejected", tenant=self.tenant.tenant, error=err[:120])
@@ -502,12 +532,12 @@ class WorkdayAccount:
                 box.evaluate("e => { const l = e.closest('label') || e.labels[0]; (l || e).click(); }")
         self._pause(self.page, 300, 800)
         self.started_at = utcnow()
-        if not self._click("create_submit"):
+        if not self._submit("create_submit", STATE_CREATE):
             return self.state()
         self.created = True
         self.mark_created()
         self._settle()
-        state = self._wait_state()
+        state = self._wait_state(leaving=STATE_CREATE)
         if state in (STATE_CREATE, STATE_LOGIN):
             err = page_error(self.page, self.sel)
             log.warning("workday create account rejected", tenant=self.tenant.tenant, error=err[:120])

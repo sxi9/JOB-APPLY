@@ -643,7 +643,7 @@ setTimeout(() => {
       <input data-automation-id="verifyPassword" type="password">
       <input data-automation-id="createAccountCheckbox" type="checkbox">
       <button type="button" data-automation-id="createAccountSubmitButton"
-        onclick="document.getElementById('panel').innerHTML='<div data-automation-id=verifyEmailContent>Check your email for a verification code</div><input data-automation-id=verificationCode>'">Create Account</button>
+        onclick="setTimeout(() => { document.getElementById('panel').innerHTML='<div data-automation-id=verifyEmailContent>Check your email for a verification code</div><input data-automation-id=verificationCode>' }, 1200)">Create Account</button>
     </form></div>`;
 }, 1500);
 </script></body></html>"""

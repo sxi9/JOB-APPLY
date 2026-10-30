@@ -46,6 +46,17 @@ Workday + any OTP). Settings → Sites: cookie exports for Naukri / Instahyre / 
 connected on the laptop, not on the box). An LLM key + `JOBAPPLY_LLM_BACKEND=live` when AI scoring is wanted.
 Open port 8010 on the box.
 
+## Live Workday exercise (2026-10-30, Revantage tenant, auto-submit off)
+
+Mailbox connected and tested on the box (IMAP + SMTP ok). A seeded Revantage job was run for real
+(`jobapply sites apply -s workday -u sai --submit` with the global dry-run switch flipped off for that one
+command and restored after; Workday auto-submit stays off so nothing can be submitted). Findings fixed on the
+way: profile email now falls back to the mailbox address; the sign-in panel renders after the progress bar
+reports the step, so controls are awaited; Workday's Create Account button sits under a click-filter cover,
+so submits use a strategy chain (pointer, forced, raw mouse, DOM, Enter) and the result is judged only after the
+page leaves the form. Vault row `workday:revantage` exists (generated password). The account creation itself
+had not yet completed when this was written; verification mail and wizard remain unexercised.
+
 ## Known gaps / next candidates
 
 Per-user billing and limits (needed before other people use it); scheduler tasks for assisted sites and Workday
