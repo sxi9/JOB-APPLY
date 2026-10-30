@@ -48,14 +48,25 @@ Open port 8010 on the box.
 
 ## Live Workday exercise (2026-10-30, Revantage tenant, auto-submit off)
 
-Mailbox connected and tested on the box (IMAP + SMTP ok). A seeded Revantage job was run for real
-(`jobapply sites apply -s workday -u sai --submit` with the global dry-run switch flipped off for that one
-command and restored after; Workday auto-submit stays off so nothing can be submitted). Findings fixed on the
-way: profile email now falls back to the mailbox address; the sign-in panel renders after the progress bar
-reports the step, so controls are awaited; Workday's Create Account button sits under a click-filter cover,
-so submits use a strategy chain (pointer, forced, raw mouse, DOM, Enter) and the result is judged only after the
-page leaves the form. Vault row `workday:revantage` exists (generated password). The account creation itself
-had not yet completed when this was written; verification mail and wizard remain unexercised.
+Mailbox connected and tested on the box (IMAP + SMTP ok). A seeded Revantage job (application 239) was run for
+real (`jobapply sites apply -s workday -u sai --submit` with the global dry-run switch flipped off for that one
+command and restored after; Workday auto-submit stays off so nothing can be submitted). Outcome so far:
+- The Workday account exists on Revantage (vault row `workday:revantage`), sign-in works, the wizard opens.
+  Workday did not ask for an email code on this tenant, so the row still says "unverified"; harmless.
+- My Information is filled end to end except **Phone Number**, which the profile does not have: names, city,
+  Country (pre-set), Phone Device Type = Mobile (listbox button), "How Did You Hear About Us?" = LinkedIn
+  (multiselect prompt, category Career Website -> LinkedIn, flagged for review), "previously employed by any
+  Revantage entity" = No (styled radio). The step correctly pauses as "required fields left empty".
+- Fixes that came out of it: profile email falls back to the mailbox address; sign-in panel controls are awaited;
+  submit buttons use a strategy chain (pointer, forced, mouse, DOM, Enter) and the result is judged after the
+  page leaves the form; creation is retried when sign-in is rejected on a never-verified account; the engine
+  understands Workday listbox buttons, multiselect prompts (chips are promptOption rows too, excluded) and
+  covered radios; employment-history and how-did-you-hear heuristics.
+- Known noise: the step detail repeats the page's error banner for First/Last Name even though they are filled,
+  and the "I have a preferred name" checkbox is reported under the "First Name*" label (group-label heuristic).
+
+Next live step once a phone number is on the Profile: requeue application 239 and rerun; expect My Experience
+(resume upload, work history) to be the next thing to tune.
 
 ## Known gaps / next candidates
 
