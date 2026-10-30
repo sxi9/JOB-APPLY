@@ -25,11 +25,51 @@ EXTRACT_JS = r"""
     }
     return el.placeholder || '';
   };
+  const GROUP_SEL = 'fieldset, [role=group], [role=radiogroup], .application-question, .field, li, '
+    + '[data-automation-id^="formField-"]';
   const groupLabel = (el) => {
-    const fs = el.closest('fieldset, [role=group], [role=radiogroup], .application-question, .field, li');
-    if (!fs) return '';
-    const lg = fs.querySelector('legend, .application-label, .field-label, label:not(:has(input))');
-    return lg ? lg.innerText : '';
+    // The nearest group container first; when it holds no question text (Workday's role=radiogroup div inside
+    // the fieldset), the next enclosing one, up to three levels.
+    let fs = el.closest(GROUP_SEL);
+    for (let d = 0; fs && d < 3; d++, fs = fs.parentElement ? fs.parentElement.closest(GROUP_SEL) : null) {
+      const lg = fs.querySelector('legend, .application-label, .field-label');
+      if (lg) return lg.innerText;
+      // A label that is not one of the radios' own ("Yes" / "No" with a `for` pointing at a radio): Workday
+      // puts the question in a label / legend of the formField container and each radio's text in its own label.
+      for (const l of fs.querySelectorAll('label')) {
+        if (l.querySelector('input')) continue;
+        const target = l.getAttribute('for') ? document.getElementById(l.getAttribute('for')) : null;
+        if (target && (target.type === 'radio' || target.type === 'checkbox')) continue;
+        return l.innerText;
+      }
+    }
+    return '';
+  };
+  // Workday's single-select dropdown is neither <select> nor role=combobox: a <button aria-haspopup="listbox">
+  // whose text is the current value ("India", "Select One"); clicking it opens a popup of [role=option] /
+  // [data-automation-id=menuItem] rows. Extracted as type "listbox".
+  const isListbox = (el) => (el.tagName === 'BUTTON' || el.getAttribute('role') === 'button') &&
+    el.getAttribute('aria-haspopup') === 'listbox';
+  const LISTBOX_PLACEHOLDER = /^(select( one| an? option|\.{3}|…)?|choose( one)?|please select|-+|none|--)?$/i;
+  // Workday's multi-select prompt: a text input (placeholder "Search", list icon) inside multiSelectContainer;
+  // the chosen values are [data-automation-id=selectedItem] chips next to it, the options only exist while
+  // its popup is open (typed text + Enter). Extracted as a combobox with multiselect=true.
+  const formFieldOf = (el) => el.closest('[data-automation-id^="formField-"]');
+  const chipText = (n) => {
+    const c = n.cloneNode(true);
+    c.querySelectorAll('button, svg, [aria-hidden="true"]').forEach(x => x.remove());
+    return (c.textContent || '').replace(/\s+/g, ' ').trim();
+  };
+  const chipsOf = (box) => box ? Array.from(box.querySelectorAll('[data-automation-id="selectedItem"]')).map(chipText).filter(Boolean) : [];
+  const multiBoxOf = (el) => {
+    if (el.tagName !== 'INPUT' || !(el.type === 'text' || el.type === '')) return null;
+    const ms = el.closest('[data-automation-id="multiSelectContainer"]');
+    if (ms) return ms;
+    const ff = formFieldOf(el);
+    if (!ff) return null;
+    if (ff.querySelector('[data-automation-id="selectedItem"], [data-automation-id="selectedItemList"]')) return ff;
+    if (/^search$/i.test(el.placeholder || '') && ff.querySelector('svg, [class*="icon"], button[aria-label]')) return ff;
+    return null;
   };
   // Custom dropdowns (React-Select, Ashby, Workday) are a text input with role=combobox / aria-autocomplete
   // whose options only exist in the DOM while the menu is open. They have no <label for> as often as not,
@@ -73,8 +113,9 @@ EXTRACT_JS = r"""
     }
     return null;
   };
-  const inputs = Array.from(document.querySelectorAll('input, select, textarea'))
-    .filter(el => !(el.type === 'hidden' || el.type === 'submit' || el.type === 'button' || el.type === 'image'));
+  const inputs = Array.from(document.querySelectorAll(
+      'input, select, textarea, button[aria-haspopup="listbox"], [role="button"][aria-haspopup="listbox"]'))
+    .filter(el => isListbox(el) || !(el.type === 'hidden' || el.type === 'submit' || el.type === 'button' || el.type === 'image'));
   const twins = new Map();  // non-combobox input -> its combobox
   for (const el of inputs) {
     if (!isCombobox(el)) continue;
@@ -102,16 +143,40 @@ EXTRACT_JS = r"""
     const selector = bySelector.get(el);
     let options = [];
     if (el.tagName === 'SELECT') options = Array.from(el.options).map(o => o.text.trim()).filter(Boolean).slice(0, 80);
-    const combo = isCombobox(el);
-    const type = el.tagName === 'SELECT' ? 'select' : (el.tagName === 'TEXTAREA' ? 'textarea' : (combo ? 'combobox' : (el.type || 'text')));
+    const listbox = isListbox(el);
+    const multiBox = listbox ? null : multiBoxOf(el);
+    const combo = !listbox && (isCombobox(el) || !!multiBox);
+    const type = listbox ? 'listbox' : (el.tagName === 'SELECT' ? 'select' : (el.tagName === 'TEXTAREA' ? 'textarea' : (combo ? 'combobox' : (el.type || 'text'))));
     let label = (labelFor(el) || '').trim();
-    let required = !!(el.required || el.getAttribute('aria-required') === 'true' || /required|✱|\*/.test((el.labels && el.labels[0]) ? el.labels[0].innerText : ''));
+    const ownLabel = (el.labels && el.labels[0]) ? el.labels[0].innerText : '';
+    const REQUIRED_MARK = /required|✱|\*/;
+    let required = !!(el.required || el.getAttribute('aria-required') === 'true' || REQUIRED_MARK.test(ownLabel));
+    let value = el.type === 'checkbox' || el.type === 'radio' ? (el.value || '') : '';
+    // A radio / checkbox question's asterisk sits in the group's legend or label, not on the inputs.
+    const group = (type === 'radio' || type === 'checkbox') ? (groupLabel(el) || '').trim().replace(/\s+/g, ' ').slice(0, 200) : '';
+    if (group && REQUIRED_MARK.test(group)) required = true;
+    if (listbox) {
+      const shown = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+      value = LISTBOX_PLACEHOLDER.test(shown) ? '' : shown;
+      if (!label) label = idsText(el.getAttribute('aria-labelledby')) || (nearestLabel(el) || '').trim();
+      if (REQUIRED_MARK.test(label)) required = true;  // the asterisk of an aria-labelledby / nearby label
+      const ff = formFieldOf(el);
+      const ffLabel = ff ? ff.querySelector('label') : null;
+      if (ffLabel && REQUIRED_MARK.test(ffLabel.innerText || '')) required = true;
+    } else if (multiBox) {
+      value = chipsOf(multiBox).join('; ');
+      const ff = formFieldOf(el) || multiBox;
+      const ffLabel = ff.querySelector('label');
+      // No label at all, or only the input's placeholder ("Search") when the container's <label> has no `for`.
+      if (ffLabel && (!label || label === (el.placeholder || '').trim())) label = (ffLabel.innerText || '').trim();
+      if (ffLabel && REQUIRED_MARK.test(ffLabel.innerText || '')) required = true;
+    }
     const role = el.getAttribute('role') || '';
     const ariaAutocomplete = el.getAttribute('aria-autocomplete') || '';
     const expanded = el.getAttribute('aria-expanded') || '';
     const controls = el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '';
     let twin = '';
-    if (combo) {
+    if (combo && !multiBox) {
       if (!label) label = idsText(el.getAttribute('aria-labelledby')) || idsText(el.getAttribute('aria-describedby'));
       const t = twinOf(el);
       if (t && !isCombobox(t)) {
@@ -128,11 +193,11 @@ EXTRACT_JS = r"""
     }
     out.push({ idx: i, selector, tag: el.tagName.toLowerCase(), type, name: el.name || '', id: el.id || '',
       label: label.replace(/\s+/g, ' ').slice(0, 200),
-      group: (type === 'radio' || type === 'checkbox') ? (groupLabel(el) || '').trim().replace(/\s+/g, ' ').slice(0, 200) : '',
+      group,
       required,
-      value: el.type === 'checkbox' || el.type === 'radio' ? (el.value || '') : '',
+      value,
       options, hidden, autocomplete: el.autocomplete || '',
-      role, aria_autocomplete: ariaAutocomplete, expanded, controls, twin });
+      role, aria_autocomplete: ariaAutocomplete, expanded, controls, twin, multiselect: !!multiBox });
     i += 1;
   }
   return out;
@@ -172,6 +237,9 @@ class FormField:
     # Set on the input that mirrors a combobox (React-Select's required twin, a hidden question_<n> input):
     # the combobox's selector. Such a field is reported hidden and never filled on its own.
     twin: str = ""
+    # A Workday multi-select prompt (type "combobox"): the chosen values are chips beside the input, the
+    # options come from a popup opened with typed text + Enter. `value` holds the current chips ("; " joined).
+    multiselect: bool = False
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> FormField:
@@ -194,9 +262,15 @@ class FormField:
     def is_combobox(self) -> bool:
         return self.type == "combobox"
 
+    @property
+    def is_listbox(self) -> bool:
+        """A `<button aria-haspopup="listbox">` single-select (Workday): its text is the current value."""
+        return self.type == "listbox"
+
     def brief(self) -> str:
         """One line for the AI mapper prompt."""
-        parts = [f"#{self.idx}", self.type, f"label={self.label!r}" if self.label else "", f"group={self.group!r}" if self.group else "",
+        parts = [f"#{self.idx}", self.type, "multiselect" if self.multiselect else "",
+                 f"label={self.label!r}" if self.label else "", f"group={self.group!r}" if self.group else "",
                  f"name={self.name!r}" if self.name and not self.label else "", "required" if self.required else ""]
         if self.options:
             parts.append("options=" + " | ".join(self.options[:25]))

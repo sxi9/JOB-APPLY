@@ -9,6 +9,14 @@
 # `fields` is the union the plain FormRunner uses (a Workday URL routed through the ATS path); `workday_steps`
 # is what the wizard installs per step so the profile match rate is judged against that step's own fields.
 # "Save and Continue" / "Next" are never submits; the only final control is Submit on the Review step.
+#
+# My Information widgets seen live on the Revantage tenant (2026-10-30, signed in): Country and Phone Device
+# Type are <button aria-haspopup="listbox"> single-selects (type "listbox"; a value the button already shows,
+# like the account's Country, is kept, so "label=Country" is effectively a no-op there); Country Phone Code
+# and How Did You Hear About Us are multi-select prompts (combobox, multiselect) whose chosen values are chips
+# (a chip already present is kept). The "previously been employed by <company>" radio is answered by the
+# heuristics (No unless the profile's employers include the company), so it is mapped to an `answers.` key.
+# "label=Country" also matches "Country Phone Code": it is listed after it so the phone code keeps its own key.
 ats: workday
 detect: "[\\w-]+\\.wd\\d+\\.myworkdayjobs\\.com/"
 fields:
@@ -20,8 +28,10 @@ fields:
   "label=City": derived.city
   "label=Postal Code": derived.postal_code
   "label=Country Phone Code": derived.phone_country
+  "label=Country": derived.country
   "label=Phone Device Type": const:Mobile
   "label=How Did You Hear About Us": derived.source
+  "label=Have you previously been employed": "answers.Have you previously been employed by this company?"
   "label=LinkedIn": profile.linkedin
   "label=Website": profile.portfolio
   "label=Job Title": profile.current_title
@@ -42,8 +52,10 @@ workday_steps:
     "label=City": derived.city
     "label=Postal Code": derived.postal_code
     "label=Country Phone Code": derived.phone_country
+    "label=Country": derived.country
     "label=Phone Device Type": const:Mobile
     "label=How Did You Hear About Us": derived.source
+    "label=Have you previously been employed": "answers.Have you previously been employed by this company?"
     "label=Preferred Name": skip
     "label=Address Line 2": skip
     "label=Phone Extension": skip

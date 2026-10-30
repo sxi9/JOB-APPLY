@@ -303,10 +303,12 @@ def test_fetch_job_and_politeness_delay():
 def test_search_once_helper():
     page1 = [_job(f"p1-{i}") for i in range(3)]
     routes = Routes(hubs={("python-jobs", 1): _hub(page1, 3)})
-    jobs = search_once("python", "India", 48, delay=0, client=routes.client())
+    # the fixture jobs are stamped relative to the pinned NOW while search_once uses the real clock: a wide
+    # window keeps the test valid on any date
+    jobs = search_once("python", "India", 24 * 365 * 50, delay=0, client=routes.client())
     assert len(jobs) == 3 and jobs[0].source == "cutshort"
     routes = Routes(hubs={("python-jobs", 1): _hub(page1, 3)})
-    jobs = search_once(["python", "python-jobs"], delay=0, client=routes.client())
+    jobs = search_once(["python", "python-jobs"], hours_old=24 * 365 * 50, delay=0, client=routes.client())
     assert len(jobs) == 3
 
 

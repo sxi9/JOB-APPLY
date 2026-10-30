@@ -6,7 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from jobapply.forms.profiles import FormProfileSpec
-from jobapply.forms.runner import FormRunner
+from jobapply.forms.runner import AnswerSource, FormRunner
 from jobapply.seed import DEMO_PROFILE
 from jobapply.sites.workday import wizard as wz
 from jobapply.sites.workday.wizard import (
@@ -168,6 +168,47 @@ def test_missing_required_answer_pauses_before_save_and_continue(page, session, 
     assert result.paused_reason == "My Information: required fields left empty"
     assert any("previously worked" in u.lower() for u in result.unfilled_required)
     assert wd_state(page).get("next_clicks", 0) == 0 and not result.reached_review
+
+
+# ------------------------------------------------------------------ the live My Information widgets (Revantage)
+
+LONG_Q = ("Have you previously been employed by any Revantage entity across any location, including as an intern? "
+          "CURRENT EMPLOYEES: Please apply via our internal Workday career site instead.")
+
+
+def _source_chips(page) -> list[str]:
+    chips = page.locator('[data-automation-id="formField-source"] [data-automation-id="selectedItem"] span')
+    return chips.all_inner_texts()
+
+
+def test_live_widgets_step_fails_only_on_phone_number(page, session, demo, resume):
+    """Listbox buttons, multi-select prompts and the long-label radio are filled (no LLM: profile, step map and
+    heuristics); with an empty profile phone the step stops on Phone Number alone, before Save and Continue."""
+    demo.profile = {**demo.profile, "phone": ""}
+    open_wizard(page, live_widgets=True)
+    result = make_wizard(session, demo, resume, AnswerSource(session, None, demo)).run(page, submit=True)
+    assert result.paused_reason == "My Information: required fields left empty", result.as_dict()
+    assert result.steps[0].unfilled_required == ["Phone Number*"]
+    assert result.needs_human == [] and not result.reached_review
+    assert wd_state(page).get("next_clicks", 0) == 0
+    assert page.locator("#phoneType--phoneType").inner_text() == "Mobile"
+    assert page.locator("#country--country").inner_text() == "India"
+    assert page.locator("#country--country").get_attribute("data-opens") == "0"
+    assert _source_chips(page) == ["Job Board"]
+    assert page.locator("#source--source").get_attribute("aria-expanded") == "false"
+    assert page.locator("#previousWorker-1").is_checked()
+    assert result.steps[0].answers[LONG_Q[:120]] == "No"
+
+
+def test_live_widgets_dry_run_reaches_review(page, session, demo, resume):
+    open_wizard(page, live_widgets=True)
+    result = make_wizard(session, demo, resume, AnswerSource(session, None, demo)).run(page, submit=False)
+    assert result.paused_reason == "" and result.error == "", result.as_dict()
+    assert result.reached_review and not result.submit_clicked and result.steps[0].advanced
+    info = wd_state(page)["values"][STEP_MY_INFORMATION]
+    assert info["Phone Device Type*"] == "Mobile" and info["Country*"] == "India"
+    assert info["Country Phone Code*"] == "India (+91)" and info["How Did You Hear About Us?*"] == "Job Board"
+    assert info["Phone Number*"] == DEMO_PROFILE["phone"] and info[LONG_Q + "*"] == "No"
 
 
 def test_site_error_after_save_and_continue_is_reported(page, session, demo, resume):

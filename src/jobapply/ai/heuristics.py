@@ -279,8 +279,88 @@ def _degree_of(profile: dict[str, Any], options: list[str] | None) -> str | None
     return education
 
 
-def heuristic_answer(question: str, options: list[str] | None, vault: User | dict | None) -> tuple[str | None, int]:
-    """Answer the common closed questions from the profile. `(None, 0)` when the profile cannot answer."""
+# "Have you previously been employed by any Revantage entity, including as an intern?", "Have you ever worked
+# for Acme?", "Are you a current employee of Acme?", "Former employee?". The employment verb must be followed
+# by the employer it asks about: "us / here / this company / any <X> entity" or a capitalised name ("for Acme",
+# "by Example Systems"). Without one it is an experience question ("Have you worked with Kubernetes before?",
+# "Have you ever worked remotely?", "previously worked in a startup?") that a confident No would answer wrongly;
+# "Are you currently employed?" (a status question) and "current company" (the profile rule) are not matched.
+# Matched against the question in its original case: the name alternative needs the capital letter.
+# No bare "work": "eligible / authorized / would you like to work here" ask something else.
+_EMP_VERB = r"(employed|worked|working|(been )?an? (employee|intern|contractor|consultant))"
+_EMP_US = (r"(us|here|this (company|organi[sz]ation|firm|employer)|the (company|firm|organi[sz]ation)|"
+           r"our (company|organi[sz]ation|firm)|any [\w .&'-]{0,40}?(entit(y|ies)|affiliates?|subsidiar(y|ies)))")
+_EMP_NAME = r"(any |the )?(?-i:[A-Z])[\w&'.-]+"
+_EMPLOYMENT_Q = re.compile(
+    rf"\b{_EMP_VERB} (here\b|(by|for|at|with|of) {_EMP_US}\b|(by|for|at|of) {_EMP_NAME})|"
+    r"\bare you (currently )?(an? )?(current|existing|present|former|previous|prior|ex-?) ?"
+    r"(employee|worker|staff member|team member|intern|contractor)\b|"
+    r"\b(former|previous|prior|ex-?) ?(employee|worker|intern|staff( member)?|contractor)\b|\bre-?hire\b",
+    re.I,
+)
+# "How did you hear about us / this position?", "Where did you find this job?", "Source *". The verb needs its
+# object: "Where did you learn to code?" or "How did you find out about our culture?" are not source questions.
+_SOURCE_Q = re.compile(
+    r"hear about (us|this|the|our)\b|"
+    r"(how|where) did you (learn|find( out)?|see) (about|of) (us\b|(this|the) (job|position|role|opening|"
+    r"opportunity|posting|vacancy|listing|ad))|"
+    r"where did you (find|see|come across) (this|the|our) (job|position|role|opening|opportunity|posting|vacancy|"
+    r"listing|ad)|"
+    r"referral source|lead source|^(application )?source\s*\*?$|source of (your )?(application|referral)"
+)
+_COMPANY_NOISE = {"the", "inc", "ltd", "llc", "corp", "co", "company", "group", "systems", "technologies",
+                  "solutions", "limited", "private", "pvt", "labs", "software", "services", "holdings", "plc"}
+
+
+def _employers_of(profile: dict[str, Any]) -> list[str]:
+    """The current employer plus the resume's past employers, lowercased."""
+    names = [str(profile.get("current_company") or "")]
+    resume = profile.get("resume_json")
+    for entry in (resume.get("work") or []) if isinstance(resume, dict) else []:
+        if isinstance(entry, dict):
+            names.append(str(entry.get("name") or entry.get("company") or ""))
+    return [n.strip().lower() for n in names if n and n.strip()]
+
+
+def _names_employer(q: str, profile: dict[str, Any]) -> bool:
+    """Does the question name one of the profile's employers ("employed by any Revantage entity" for a profile
+    whose current company is Revantage Asia)? Whole name anywhere; its first distinctive word only where an
+    employer is named ("by any Example", "of Startup"), so "Startup Labs" does not turn "worked in a startup"
+    into a Yes. `q` is lowercased."""
+    for name in _employers_of(profile):
+        if re.search(rf"(?<!\w){re.escape(name)}(?!\w)", q):
+            return True
+        words = [w for w in re.findall(r"[a-z0-9]+", name) if len(w) >= 4 and w not in _COMPANY_NOISE]
+        if words and re.search(rf"\b(by|for|at|with|of) (any |the )?{re.escape(words[0])}(?!\w)", q):
+            return True
+    return False
+
+
+def _job_source(job: Any) -> str:
+    if job is None:
+        return ""
+    if isinstance(job, dict):
+        return str(job.get("source") or "")
+    return str(getattr(job, "source", "") or "")
+
+
+def _employment_answer(question: str, profile: dict[str, Any]) -> str | None:
+    """`question` in its original case (the company-name alternative needs the capital letter)."""
+    if not _EMPLOYMENT_Q.search(question):
+        return None
+    return "Yes" if _names_employer(question.lower(), profile) else "No"
+
+
+def _source_answer(q: str, job: Any) -> str | None:
+    if not _SOURCE_Q.search(q):
+        return None
+    return "LinkedIn" if "linkedin" in _job_source(job).lower() else "Job Board"
+
+
+def heuristic_answer(question: str, options: list[str] | None, vault: User | dict | None,
+                     job: Job | dict | None = None) -> tuple[str | None, int]:
+    """Answer the common closed questions from the profile. `(None, 0)` when the profile cannot answer. `job`
+    (optional) is the posting being applied to: its source decides the "how did you hear about us" answer."""
     profile = _profile_of(vault)
     q = re.sub(r"\s+", " ", (question or "").lower())
     answer: str | None = None
@@ -298,6 +378,10 @@ def heuristic_answer(question: str, options: list[str] | None, vault: User | dic
         # would also match "expected graduation date", "mobile development" or "availability for interviews",
         # and a wrong profile value filled at high confidence is submitted without review.
         rules: list[tuple[str, Any, int]] = [
+            # "Have you previously been employed by <company>?" is "No" unless the profile's employers include
+            # that company. Any ATS asks it; the match itself is in `_employment_answer`.
+            (r".", _employment_answer(re.sub(r"\s+", " ", question or ""), profile), 85),
+            (r".", _source_answer(q, job), 70),
             (r"notice period|how soon can you|when can you (start|join)|earliest (start|joining)|"
              r"(start|joining) date|availab(le|ility) to (start|join)|date of joining",
              profile.get("notice_period"), 85),

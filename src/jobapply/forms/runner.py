@@ -116,10 +116,41 @@ DOM_SNIPPET_JS = r"""
 (sel) => {
   const el = document.querySelector(sel);
   if (!el) return '';
-  const n = el.closest('.field, .form-group, .application-question, fieldset, li') || el.parentElement || el;
+  const n = el.closest('.field, .form-group, .application-question, fieldset, li, [data-automation-id^="formField-"]')
+    || el.parentElement || el;
   return ((n.outerHTML || '').replace(/\s+/g, ' ').trim()).slice(0, 2000);
 }
 """
+
+# The chips a Workday multi-select prompt shows as its chosen values: [data-automation-id=selectedItem] inside
+# the input's multiSelectContainer / formField wrapper, without their remove buttons.
+CHIPS_JS = r"""
+(sel) => {
+  const el = document.querySelector(sel);
+  if (!el) return [];
+  const box = el.closest('[data-automation-id="multiSelectContainer"], [data-automation-id^="formField-"]')
+    || el.parentElement;
+  if (!box) return [];
+  return Array.from(box.querySelectorAll('[data-automation-id="selectedItem"]')).map(n => {
+    const c = n.cloneNode(true);
+    c.querySelectorAll('button, svg, [aria-hidden="true"]').forEach(x => x.remove());
+    return (c.textContent || '').replace(/\s+/g, ' ').trim();
+  }).filter(Boolean);
+}
+"""
+
+# What a listbox button shows when nothing is chosen yet.
+LISTBOX_PLACEHOLDER = re.compile(r"^(select( one| an? option|\.{3}|…)?|choose( one)?|please select|-+|none|--)?$",
+                                 re.I)
+
+# Menu rows that must never be clicked while picking an option: anything that reads like a form action.
+ACTION_ROW = re.compile(r"^\s*(submit|apply|send|save( and continue)?|next|continue|finish|done)\s*$", re.I)
+
+# "How did you hear about us?" style prompts: when the wanted entry is missing, these generic entries (in this
+# order) are acceptable; any other multiselect hands its visible entries back for a second ask instead.
+SOURCE_QUESTION = re.compile(r"hear about|how did you (learn|find)|referral source|lead source|^source\b|"
+                             r"where did you (find|see)", re.I)
+SOURCE_FALLBACKS = ("job board", "linkedin", "online", "career website", "other")
 
 
 @dataclass
@@ -230,7 +261,7 @@ class AnswerSource:
             # A free-text "anything else / why do you want" box: offer the tailored per-application message
             # before falling back to the generic heuristic / LLM answer.
             return self.message, 85
-        answer, conf = heuristic_answer(question, options, self.user)
+        answer, conf = heuristic_answer(question, options, self.user, job=self.job)
         if answer is not None:
             self._bank_heuristic(question, answer)
             return answer, conf
@@ -311,6 +342,7 @@ class FormRunner:
     def plan_from_spec(self, fields: list[FormField], mapping: dict[str, str], source: str) -> list[PlannedFill]:
         plan: list[PlannedFill] = []
         used: set[int] = set()
+        radio_groups: set[str] = set()
         by_selector = {f.selector: f for f in fields}
         for selector, key in mapping.items():
             for f in match_selector(fields, selector):
@@ -319,10 +351,19 @@ class FormRunner:
                     f = by_selector[f.twin]
                 if f.idx in used or f.hidden:
                     continue
-                rv = resolve_key(key, self.vault)
-                if rv.kind == "skip":
+                if f.type == "radio" and f.name and f.name in radio_groups:
+                    # A `label=` selector on a radio question matches every radio of the group (the question is
+                    # their shared group text): one fill picks the right radio by value, so plan the group once.
                     used.add(f.idx)
                     continue
+                rv = resolve_key(key, self.vault)
+                if rv.kind == "skip":
+                    # Only a planned fill claims the group: a mapping that skips one radio and maps another
+                    # (an LLM marking the unwanted option "skip") still fills the question.
+                    used.add(f.idx)
+                    continue
+                if f.type == "radio" and f.name:
+                    radio_groups.add(f.name)
                 plan.append(PlannedFill(f, key, rv.value, rv.kind, source))
                 used.add(f.idx)
                 if rv.kind == "file":
@@ -349,7 +390,14 @@ class FormRunner:
                     skip_idx.add(m.idx)
         for p in plan:
             if p.kind == "question" and p.value is None and self.answers is not None:
-                answer, conf = self.answers.answer(p.field.question or p.key[8:])
+                # A radio / checkbox question is asked with its choices, as the unmapped loop below does: an
+                # answer source that needs the options (bank, LLM) gets them on this one ask, since
+                # `_retry_with_options` does not re-ask a choice field whose answer came from the source.
+                options = None
+                if p.field.is_choice:
+                    group = [g for g in fields if g.is_choice and g.name and g.name == p.field.name] or [p.field]
+                    options = [g.label or g.value for g in group]
+                answer, conf = self.answers.answer(p.field.question or p.key[8:], options)
                 p.value, p.confidence, p.source = answer, conf, "ai"
                 if answer is not None and conf < self.min_answer_confidence:
                     result.needs_human.append(f"{p.field.question[:100]}: low confidence answer, review it")
@@ -358,6 +406,8 @@ class FormRunner:
                 continue
             if f.is_file or f.type in ("search", "password"):
                 continue
+            if self._prefilled(f):
+                continue  # a listbox / prompt the site already filled (Country, Country Phone Code) is left alone
             if self.answers is None or not f.question:
                 continue
             options = f.options or None
@@ -369,7 +419,7 @@ class FormRunner:
                 mapped.update(g.idx for g in group)
             answer, conf = self.answers.answer(f.question, options)
             if answer is None:
-                if f.is_combobox:
+                if f.is_combobox or f.is_listbox:
                     # The options are only in the DOM once the menu is open: planned without an answer, the
                     # fill step reads them from the dropdown and asks again (`_retry_with_options`).
                     plan.append(PlannedFill(f, f"answers.{f.question[:80]}", None, "question", "pending", 0))
@@ -381,6 +431,11 @@ class FormRunner:
                 result.needs_human.append(f"{f.question[:100]}: low confidence answer, review it")
 
     # ------------------------------------------------------------ execution
+
+    @staticmethod
+    def _prefilled(f: FormField) -> bool:
+        """A Workday listbox button / multi-select prompt that already shows a value (chips)."""
+        return bool(f.value) and (f.is_listbox or (f.is_combobox and f.multiselect))
 
     @staticmethod
     def _pick_option(options: list[str], value: Any) -> str | None:
@@ -688,6 +743,213 @@ class FormRunner:
         self._close(loc)
         return opts
 
+    # ------------------------------------------------------------ Workday listbox buttons and multi-select prompts
+
+    # Rows of a listbox button's popup: Workday renders [role=option] rows with data-automation-id=menuItem.
+    MENU_ITEM_ROWS = '[data-automation-id="menuItem"]'
+    PROMPT_ROWS = '[data-automation-id="promptOption"]'
+
+    @staticmethod
+    def _listbox_text(loc) -> str:
+        try:
+            return re.sub(r"\s+", " ", loc.inner_text(timeout=1000) or "").strip()
+        except Exception:  # noqa: BLE001 - detached button
+            return ""
+
+    @staticmethod
+    def _is_action_control(loc) -> bool:
+        """A control that could submit: type=submit, or text that reads like a form action."""
+        try:
+            if (loc.get_attribute("type", timeout=1000) or "").lower() == "submit":
+                return True
+            return ACTION_ROW.match(loc.inner_text(timeout=1000) or "") is not None
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _listbox_rows(self, page, f: FormField, loc):
+        """The rows of the popup a listbox button opened: its aria-controls target / any visible listbox (via
+        `_options_locator`), else the visible menuItem rows' container."""
+        opts = self._options_locator(page, f, loc)
+        if opts is not None:
+            return opts
+        try:
+            rows = page.locator(f"{self.MENU_ITEM_ROWS}:visible")
+            if rows.count():
+                return rows
+        except Exception:  # noqa: BLE001 - popup re-rendered under us
+            pass
+        return None
+
+    def _wait_rows(self, page, finder, wait_ms: int | None = None) -> list[str]:
+        """Texts of the rows `finder()` returns once it returns any real ones, within `wait_ms`."""
+        deadline = time.monotonic() + (wait_ms or self.LISTBOX_WAIT_MS) / 1000
+        while True:
+            rows = finder()
+            if rows is not None:
+                try:
+                    texts = [re.sub(r"\s+", " ", t).strip() for t in rows.all_inner_texts()]
+                except Exception:  # noqa: BLE001 - re-rendered under us
+                    texts = []
+                if self._real_options(texts):
+                    return texts
+            if time.monotonic() >= deadline:
+                return []
+            page.wait_for_timeout(self.LISTBOX_POLL_MS)
+
+    def _click_row(self, page, finder, pick: str) -> None:
+        """Click the row whose text is `pick` on the live menu; never a row that reads like a form action."""
+        if ACTION_ROW.match(pick):
+            raise ValueError(f"refusing to click {pick!r}: it looks like a form action")
+        rows = finder()
+        if rows is None:
+            raise ValueError("the menu closed before the option could be clicked")
+        live = [re.sub(r"\s+", " ", t).strip() for t in rows.all_inner_texts()]
+        if pick not in live:
+            raise ValueError(f"option {pick!r} is no longer on the menu")
+        target = rows.nth(live.index(pick))
+        target.scroll_into_view_if_needed(timeout=1000)
+        target.click(timeout=2000)
+
+    def _fill_listbox(self, page, p: PlannedFill) -> str:
+        """Workday single-select: a value the button already shows is kept (the account pre-fills Country and
+        the like; the fill pass never fights it), otherwise the button is clicked, the popup read and the best
+        matching row clicked, then the button text is verified. No keyboard: Enter on a button is a click."""
+        f = p.field
+        text = ("Yes" if p.value else "No") if isinstance(p.value, bool) else str(p.value or "").strip()
+        loc = page.locator(f.selector).first
+        shown = self._listbox_text(loc)
+        if shown and not LISTBOX_PLACEHOLDER.match(shown):
+            log.debug("listbox already set", selector=f.selector, shown=shown)
+            p.value = shown
+            return ""
+        if not text:
+            raise ValueError("no value")
+        if self._is_action_control(loc):
+            raise ValueError("the listbox button looks like a submit control")
+        finder = lambda: self._listbox_rows(page, f, loc)  # noqa: E731
+        loc.click(timeout=5000)
+        options = self._wait_rows(page, finder)
+        pick = self._best_option(options, text)
+        if pick is None:
+            f.options = [o for o in options if o]
+            self._close(loc)
+            raise ValueError(f"no option matches {text!r}" if options else "the listbox showed no options")
+        try:
+            self._click_row(page, finder, pick)
+        except Exception as exc:
+            self._close(loc)
+            raise ValueError(f"option {pick!r} not clickable: {str(exc)[:80]}") from None
+        page.wait_for_timeout(200)
+        shown = self._listbox_text(loc)
+        if not self._shows(shown, pick, ""):
+            self._close(loc)
+            raise ValueError(f"picked {pick!r} but the button shows {shown!r}")
+        p.value = shown
+        return ""
+
+    def _listbox_options(self, page, f: FormField) -> list[str]:
+        """Open a listbox button, read its rows and close it again (for the second ask with options)."""
+        loc = page.locator(f.selector).first
+        opts: list[str] = []
+        try:
+            if not self._is_action_control(loc):
+                loc.click(timeout=5000)
+                opts = self._wait_rows(page, lambda: self._listbox_rows(page, f, loc), self.LISTBOX_WAIT_MS // 2)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("listbox options not read", selector=f.selector, error=str(exc)[:120])
+        self._close(loc)
+        return [o for o in opts if o]
+
+    def _chips(self, page, f: FormField) -> list[str]:
+        try:
+            return [c for c in (page.evaluate(CHIPS_JS, f.selector) or []) if c]
+        except Exception:  # noqa: BLE001 - detached input
+            return []
+
+    def _prompt_rows(self, page):
+        try:
+            rows = page.locator(f"{self.PROMPT_ROWS}:visible")
+            return rows if rows.count() else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _prompt_search(self, page, loc, text: str) -> list[str]:
+        """Type `text` (nothing for the full list) and press Enter: the prompt's popup opens with its entries.
+        Enter here opens the popup; the dry-run guard swallows any native submit it could cause."""
+        self._clear_text(loc)
+        if text:
+            loc.press_sequentially(text, delay=15)
+        loc.press("Enter", timeout=2000)
+        return self._wait_rows(page, lambda: self._prompt_rows(page), self.LISTBOX_WAIT_MS // 2)
+
+    def _prompt_options(self, page, f: FormField) -> list[str]:
+        """Open a multi-select prompt with nothing typed, read its top-level entries and close it again (for
+        the second ask with options, like `_listbox_options`)."""
+        loc = page.locator(f.selector).first
+        opts: list[str] = []
+        try:
+            loc.click(timeout=5000)
+            opts = self._prompt_search(page, loc, "")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("prompt options not read", selector=f.selector, error=str(exc)[:120])
+        self._close(loc)
+        return [o for o in opts if o]
+
+    def _fill_multiselect(self, page, p: PlannedFill) -> str:
+        """Workday multi-select prompt. Chips already present are kept (Country Phone Code comes pre-filled).
+        Otherwise: type the value, Enter, click the best matching entry; a category entry opens one level down,
+        which is searched again; when nothing matches, a source-style question takes a generic entry
+        (SOURCE_FALLBACKS), any other prompt hands its entries back for a second ask. Escape closes the popup
+        (left open, Workday reports the field as expanded and empty), then a chip must exist."""
+        f = p.field
+        text = ("Yes" if p.value else "No") if isinstance(p.value, bool) else str(p.value or "").strip()
+        loc = page.locator(f.selector).first
+        chips = self._chips(page, f)
+        if chips:
+            log.debug("multiselect already set", selector=f.selector, chips=chips)
+            p.value = "; ".join(chips)
+            return ""
+        if not text:
+            raise ValueError("no value")
+        fallbacks = SOURCE_FALLBACKS if SOURCE_QUESTION.search(f.question or "") else ()
+        loc.click(timeout=5000)
+        options = self._prompt_search(page, loc, text)
+        if not options:
+            options = self._prompt_search(page, loc, "")  # nothing found: browse the whole list
+        top = [o for o in options if o]
+        finder = lambda: self._prompt_rows(page)  # noqa: E731
+        for _ in range(3):
+            if not options:
+                break
+            pick = self._best_option(options, text)
+            if pick is None:
+                pick = next((o for w in fallbacks for o in options if w in o.lower() and not ACTION_ROW.match(o)), None)
+            if pick is None:
+                break
+            try:
+                self._click_row(page, finder, pick)
+            except Exception as exc:  # noqa: BLE001 - re-rendered menu
+                log.debug("prompt option click failed", selector=f.selector, error=str(exc)[:120])
+                break
+            page.wait_for_timeout(250)
+            if self._chips(page, f):
+                break
+            after = self._wait_rows(page, finder, self.LISTBOX_WAIT_MS // 3)
+            if after == options:
+                break  # the click changed nothing: not a category and no chip
+            options = after  # a category opened: look one level down
+        self._close(loc)
+        page.wait_for_timeout(100)
+        chips = self._chips(page, f)
+        if not chips:
+            f.options = top
+            self._clear_text(loc)
+            raise ValueError(f"no option matches {text!r}" if top else f"no suggestions for {text!r}")
+        p.value = "; ".join(chips)
+        if not any(self._shows(c, text, "") for c in chips):
+            return f"picked {p.value!r} for {text!r}, review it"
+        return ""
+
     def _fill_one(self, page, p: PlannedFill, fields: list[FormField], result: FillResult | None = None) -> None:
         f = p.field
         locator = page.locator(f.selector).first
@@ -696,10 +958,16 @@ class FormRunner:
                 raise ValueError("resume file missing")
             locator.set_input_files(str(p.value))
             return
+        if f.is_listbox:
+            self._fill_listbox(page, p)
+            return
         if f.is_combobox:
-            if p.value is None:
-                raise ValueError("no answer")
-            note = self._fill_combobox(page, p)
+            if f.multiselect:
+                note = self._fill_multiselect(page, p)
+            else:
+                if p.value is None:
+                    raise ValueError("no answer")
+                note = self._fill_combobox(page, p)
             if note and result is not None:
                 result.needs_human.append(f"{f.question[:100]}: {note}")
             return
@@ -730,6 +998,10 @@ class FormRunner:
         text = str(p.value)
         if isinstance(p.value, bool):
             text = "Yes" if p.value else "No"
+        if not text.strip() and f.required:
+            # An empty profile value (no phone on file) must not count as a filled required field: it is
+            # reported as unfilled so the run pauses instead of advancing with a blank.
+            raise ValueError("no value")
         locator.fill(text)
         if f.autocomplete == "off" and f.type == "text" and f.options == []:
             # Some react-select style inputs need Enter to commit the typed value.
@@ -915,6 +1187,8 @@ class FormRunner:
         choice_names_done = {p.field.name for p in plan if p.done and p.field.is_choice}
         for f in fields:
             if f.required and not f.hidden and f.idx not in done_idx and f.name not in choice_names_done:
+                if FormRunner._prefilled(f):
+                    continue
                 result.unfilled_required.append(f.question[:100] or f.selector)
         result.unfilled_required = list(dict.fromkeys(result.unfilled_required))
         result.needs_human = list(dict.fromkeys(result.needs_human))
@@ -1064,8 +1338,15 @@ class FormRunner:
         f = p.field
         if self.answers is None:
             return False
-        if f.is_combobox:
-            options = f.options or self._combobox_options(page, f)
+        if f.is_combobox or f.is_listbox:
+            if f.multiselect:
+                # The entries the failed fill saw; a prompt planned without an answer was never opened, so its
+                # top-level entries are browsed once (a failed fill with no entries is not reopened blind).
+                options = f.options or (self._prompt_options(page, f) if p.value is None else [])
+            elif f.is_listbox:
+                options = f.options or self._listbox_options(page, f)
+            else:
+                options = f.options or self._combobox_options(page, f)
             if not options:
                 return False
             f.options = options
@@ -1114,6 +1395,10 @@ class FormRunner:
             return [g.label or g.value for g in fields if g.is_choice and g.name and g.name == f.name] or [
                 f.label or f.value
             ]
+        if f.is_combobox and f.multiselect:
+            return list(f.options or [])
+        if f.is_listbox:
+            return list(f.options) if f.options else self._listbox_options(page, f)
         if f.is_combobox:
             return list(f.options) if f.options else self._combobox_options(page, f)
         return []

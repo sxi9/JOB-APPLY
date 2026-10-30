@@ -62,6 +62,24 @@ def test_file_key_fills_only_one_input(session, resume):
     assert [p.field.id for p in plan] == ["resume"]
 
 
+def test_radio_group_is_planned_when_the_mapping_skips_one_option_and_maps_another(session, resume):
+    # An LLM mapping often marks the unwanted radio "skip" and the wanted one with a key: the skip must not
+    # claim the group, whichever order the two entries come in.
+    fields = [
+        FormField(0, "#g_yes", "input", "radio", name="q1", id="g_yes", label="Yes", group="Employed by us?",
+                  value="Yes"),
+        FormField(1, "#g_no", "input", "radio", name="q1", id="g_no", label="No", group="Employed by us?",
+                  value="No"),
+    ]
+    runner = FormRunner(session, vault(resume), profiles_dir=PROFILES)
+    for mapping in ({"#g_yes": "skip", "#g_no": "const:No"}, {"#g_no": "const:No", "#g_yes": "skip"}):
+        plan = runner.plan_from_spec(fields, mapping, "learned")
+        assert [(p.field.selector, p.value) for p in plan] == [("#g_no", "No")], mapping
+    # a `label=` selector hits both radios of the group: still one fill
+    plan = runner.plan_from_spec(fields, {"label=Employed by us": "const:No"}, "builtin")
+    assert len(plan) == 1 and plan[0].field.name == "q1"
+
+
 def test_match_selector():
     fields = [
         FormField(0, "#first_name", "input", "text", id="first_name", label="First Name*"),

@@ -52,6 +52,7 @@ FIXTURE = r"""<!doctype html>
 </head><body>
 <header data-automation-id="header"><button data-automation-id="utilityButtonSignIn">Sign In</button></header>
 <div id="app"></div>
+<script>/*WIDGETS*/</script>
 <script>
 const CFG = /*CFG*/{}/*/CFG*/;
 const BASE = 'https://acme.wd5.myworkdayjobs.com/Acme/job/Bengaluru/Python-Developer_JR1';
@@ -200,11 +201,32 @@ function renderVerify() {
     error('The code you entered is invalid.');
   };
 }
+// My Information as seen live on the Revantage tenant (2026-10-30): Country and Phone Device Type are listbox
+// buttons, Country Phone Code (pre-filled) and How Did You Hear About Us are multi-select prompts, and the
+// previously-employed question is a long-label radio. Rendered with CFG.live_widgets.
+const LONG_Q = 'Have you previously been employed by any Revantage entity across any location, including as an intern?' +
+  ' CURRENT EMPLOYEES: Please apply via our internal Workday career site instead.';
+const SOURCE_TREE = ['Career Fair', 'Career Website', 'Employee Referral', {'Online': ['Job Board', 'LinkedIn', 'Company Website']},
+  'TA Outreach', 'Other'];
+function liveMyInformation() {
+  const W = window.wdWidgets;
+  return input('First Name', 'legalNameSection_firstName', {required: true}) + input('Last Name', 'legalNameSection_lastName', {required: true}) +
+    input('Address Line 1', 'addressSection_addressLine1') + input('City', 'addressSection_city') +
+    input('Postal Code', 'addressSection_postalCode') +
+    W.listboxHtml('Country*', 'country', ['India', 'United States of America', 'Germany'], {required: true, value: 'India'}) +
+    input('Email Address', 'email', {required: true}) +
+    W.promptHtml('Country Phone Code*', 'phoneCode', ['India (+91)', 'United States of America (+1)'], {required: true, chips: ['India (+91)']}) +
+    W.listboxHtml('Phone Device Type*', 'phoneType', ['Mobile', 'Home', 'Work', 'Fax'], {required: true}) +
+    input('Phone Number', 'phone-number', {required: true}) +
+    W.promptHtml('How Did You Hear About Us?*', 'source', SOURCE_TREE, {required: true}) +
+    W.radioHtml(LONG_Q + '*', 'previousWorker', ['Yes', 'No'], {required: true});
+}
 function renderWizard() {
   const step = STEPS[st.step];
   app.innerHTML = progress(step);
   let body = '';
-  if (step === 'My Information') body =
+  if (step === 'My Information' && CFG.live_widgets) body = liveMyInformation();
+  else if (step === 'My Information') body =
     input('First Name', 'legalNameSection_firstName', {required: true}) + input('Last Name', 'legalNameSection_lastName', {required: true}) +
     input('Address Line 1', 'addressSection_addressLine1') + input('City', 'addressSection_city') +
     input('Postal Code', 'addressSection_postalCode') + input('Email Address', 'email', {required: true}) +
@@ -233,6 +255,7 @@ function renderWizard() {
     `<button type="button" data-automation-id="bottom-navigation-back-button">Back</button>` +
     `<button type="button" data-automation-id="bottom-navigation-next-button">${label}</button></div></form>`;
   const form = document.getElementById('wizard-form');
+  if (window.wdWidgets) window.wdWidgets.wire(form);
   document.querySelector('[data-automation-id="bottom-navigation-back-button"]').onclick = () => {
     st.step = Math.max(0, st.step - 1); save(); render(); };
   document.querySelector('[data-automation-id="bottom-navigation-next-button"]').onclick = () => advance();
@@ -253,6 +276,12 @@ function renderWizard() {
       if (f.type === 'file') { vals[lab] = f.files.length ? f.files[0].name : ''; if (f.required && !f.files.length) missing.push(lab); continue; }
       const v = f.tagName === 'SELECT' ? (f.value === 'Select One' ? '' : f.value) : f.value;
       vals[lab] = v; if (f.required && !v) missing.push(lab);
+    }
+    if (window.wdWidgets) {
+      // listbox buttons and prompts: a placeholder, no chips or a popup left open ("Expanded") is empty
+      const w = window.wdWidgets.values(form);
+      Object.assign(vals, w.values);
+      for (const m of w.missing) if (!missing.includes(m)) missing.push(m);
     }
     if (missing.length) return error('Required fields are missing: ' + missing.join(', '));
     if (CFG.reject_step === step) return error('Something went wrong on this page. Please try again.');
@@ -279,9 +308,12 @@ render();
 """
 
 
+WIDGET_JS = (Path(__file__).parent / "fixtures" / "forms" / "workday_widgets.js").read_text(encoding="utf-8")
+
+
 def fixture_html(**cfg) -> str:
     start, end = FIXTURE.index("/*CFG*/") + len("/*CFG*/"), FIXTURE.index("/*/CFG*/")
-    return FIXTURE[:start] + json.dumps(cfg) + FIXTURE[end:]
+    return (FIXTURE[:start] + json.dumps(cfg) + FIXTURE[end:]).replace("/*WIDGETS*/", WIDGET_JS)
 
 
 def route_tenant(page, html: str) -> None:
