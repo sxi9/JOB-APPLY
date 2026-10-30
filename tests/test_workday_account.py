@@ -659,3 +659,21 @@ def test_create_account_waits_for_the_sign_in_panel_to_render(page, session, dem
     creds = account.new_credentials()
     assert account.create_account(account.email, creds["password"]) == "verify"
     assert account.created is True
+
+
+COVERED_CREATE = DELAYED_CREATE.replace(
+    '<button type="button" data-automation-id="createAccountSubmitButton"',
+    '<span style="position:relative;display:inline-block"><span id="cover" '
+    'style="position:absolute;inset:0;z-index:9"></span><button type="button" '
+    'data-automation-id="createAccountSubmitButton"',
+).replace('>Create Account</button>', '>Create Account</button></span>').replace("}, 1500);", "}, 100);")
+
+
+def test_click_falls_back_to_a_dom_click_when_a_cover_intercepts_the_pointer(page, session, demo, vault):
+    """Live Workday wraps the Create Account button in a click filter; a pointer click times out on it."""
+    route_tenant(page, COVERED_CREATE)
+    page.goto(TENANT.apply_manually_url, wait_until="domcontentloaded")
+    account = make_account(page, demo, session, vault)
+    account.click_timeout_ms = 400
+    creds = account.new_credentials()
+    assert account.create_account(account.email, creds["password"]) == "verify"

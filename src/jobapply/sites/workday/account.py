@@ -297,6 +297,7 @@ class WorkdayAccount:
         self._pause = pause or _human_pause
         self.nav_timeout_ms = nav_timeout_ms
         self.settle_ms = settle_ms
+        self.click_timeout_ms = 10_000
         self.created = False  # True once Create Account was clicked in this run
         self.started_at: datetime | None = None  # when Create Account / Sign In was clicked: mail before it is stale
 
@@ -380,12 +381,29 @@ class WorkdayAccount:
             waited += poll_ms
         return False
 
-    def _click(self, key: str, timeout: int = 10_000) -> bool:
+    def _click(self, key: str, timeout: int | None = None) -> bool:
+        """Click a control. Workday's submit buttons sit under a click-filter cover (``aria-hidden``,
+        ``tabindex=-2``), so a pointer click can time out on a visible, enabled button; then the element is
+        clicked from the DOM, and as a last resort Enter is pressed in the active field."""
         loc = _visible(self.page, self.sel[key])
         if loc is None:
             return False
-        loc.click(timeout=timeout)
-        return True
+        timeout = self.click_timeout_ms if timeout is None else timeout
+        try:
+            loc.click(timeout=timeout)
+            return True
+        except Exception as exc:  # noqa: BLE001 - intercepted / covered control
+            log.info("workday pointer click fell back to a DOM click", control=key, error=str(exc)[:80])
+        try:
+            loc.evaluate("e => e.click()")
+            return True
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.page.keyboard.press("Enter")
+            return True
+        except Exception:  # noqa: BLE001
+            return False
 
     def _fill(self, key: str, value: str) -> bool:
         loc = _visible(self.page, self.sel[key])
