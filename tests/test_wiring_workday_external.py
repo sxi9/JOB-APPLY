@@ -271,7 +271,9 @@ def test_tenant_accounts_and_forget_account(session, demo, monkeypatch):
 
 
 def test_cli_mail_and_sites_workday_help():
-    runner = CliRunner()
+    # Plain, wide help output: on CI (Linux, 80 columns) rich wraps option names and colours the text, which
+    # otherwise splits the substrings asserted below.
+    runner = CliRunner(env={"COLUMNS": "200", "NO_COLOR": "1", "TERM": "dumb"})
     result = runner.invoke(cli_app, ["--help"])
     assert result.exit_code == 0 and "mail" in result.output and "sites" in result.output
     result = runner.invoke(cli_app, ["mail", "--help"])

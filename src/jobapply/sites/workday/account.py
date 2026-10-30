@@ -535,12 +535,13 @@ class WorkdayAccount:
         if not self._submit("create_submit", STATE_CREATE):
             return self.state()
         self.created = True
-        self.mark_created()
         self._settle()
         state = self._wait_state(leaving=STATE_CREATE)
         if state in (STATE_CREATE, STATE_LOGIN):
             err = page_error(self.page, self.sel)
             log.warning("workday create account rejected", tenant=self.tenant.tenant, error=err[:120])
+        else:
+            self.mark_created()  # only once the page left the form: the click reached Workday
         return state
 
     # -- verification

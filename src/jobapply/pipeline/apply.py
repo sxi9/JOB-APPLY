@@ -272,6 +272,7 @@ def apply_by_email(
             url=job.apply_url, profile_origin="email", paused_reason="apply by email: the mailto link has no address"))
     job.ats_type = EMAIL_SITE  # so the per-site cap (applied_today(site="email")) counts this application
     session.add(job)
+    session.flush()  # visible to a refresh() before the outcome commits (refresh does not autoflush)
     subject = subject or f"Application for {job.title} at {job.company} - {name}"
     note = application_message(session, llm, user, job, app)
     contact = [str(profile.get(k) or "") for k in ("phone", "linkedin") if profile.get(k)]

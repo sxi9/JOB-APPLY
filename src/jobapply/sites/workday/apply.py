@@ -219,17 +219,27 @@ def apply_job(session: WorkdaySession, application: Application, *, dry_run: boo
         creds = account.credentials()
         # A row with `created` False never reached Create Account (the form could not be filled last time):
         # there is no account to sign in to, so creation is tried again. Rows without the flag are taken as real.
+        retry_create = False
         if creds and creds.get("password") and creds.get("created", True):
             state = account.sign_in(str(creds.get("username") or account.email), str(creds["password"]))
             result.account_state = state
             if state in (STATE_LOGIN, STATE_CREATE):
                 err = page_error(page, account.sel)
-                result.status = STATUS_PAUSED
-                result.reason = (f"workday sign-in rejected on {tenant.tenant}: "
-                                 f"{err or 'the stored password was not accepted; reset it on the Candidate Home'}")
-                _shot(page, screenshot_path, result)
-                return result.as_dict()
-        else:
+                if creds.get("verified", True) is False:
+                    # The account was never confirmed by mail: the Create Account click most likely never reached
+                    # Workday (its submit sits under a click filter), so there is nothing to sign in to yet.
+                    # Create it again with the same stored password; a real duplicate surfaces as Workday's
+                    # "already in use" error below.
+                    log.info("workday sign-in rejected on an unverified account, retrying creation",
+                             tenant=tenant.tenant, error=err[:80])
+                    retry_create = True
+                else:
+                    result.status = STATUS_PAUSED
+                    result.reason = (f"workday sign-in rejected on {tenant.tenant}: "
+                                     f"{err or 'the stored password was not accepted; reset it on the Candidate Home'}")
+                    _shot(page, screenshot_path, result)
+                    return result.as_dict()
+        if retry_create or not (creds and creds.get("password") and creds.get("created", True)):
             if vault is None:
                 result.status, result.reason, result.stop_run = (
                     STATUS_PAUSED, "vault not configured: set JOBAPPLY_VAULT_KEY to store Workday account passwords",
@@ -247,7 +257,8 @@ def apply_job(session: WorkdaySession, application: Application, *, dry_run: boo
                 result.status, result.reason, result.stop_run = STATUS_PAUSED, "mailbox not configured", True
                 _shot(page, screenshot_path, result)
                 return result.as_dict()
-            creds = account.new_credentials()
+            if not retry_create:
+                creds = account.new_credentials()
             state = account.create_account(account.email, str(creds["password"]))
             result.account_state, result.account_created = state, account.created
             if state in (STATE_CREATE, STATE_LOGIN):

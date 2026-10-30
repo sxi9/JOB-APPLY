@@ -462,3 +462,20 @@ def test_session_check_is_per_tenant(session, demo, workday_site):
     assert wd.check() == "ok" and ws.cooldown_until(demo) is None
     with pytest.raises(RuntimeError):
         _ = ws.WorkdaySession(None, demo, session).page
+
+
+def test_unverified_stored_row_rejected_at_sign_in_retries_creation(page, session, demo, vault, resume):  # noqa: F811
+    # Live case: the Create Account click never reached Workday (click filter), the row says created but was never
+    # verified by mail, and sign-in is rejected. The account is created with the same stored password.
+    vault.store(session, demo.id, "workday:acme", "login", "demo.applies@example.com",
+                {"password": "Stored-Pw-1", "tenant": "acme", "site": "Acme", "verified": False, "created": True})
+    _mailbox(vault, session, demo)
+    route_tenant(page, fixture_html(account_email="demo.applies@example.com", account_password="Other-Pw-1",
+                                    verify=True, code=CODE))
+    _, app = _job_and_app(session, demo, resume=resume)
+    out = _run(page, session, demo, app, dry_run=False, auto_submit=False, vault_obj=vault, messages=[code_mail()])
+    assert out["status"] == "dry_run" and out["account_created"] is True and out["reached_review"], out["reason"]
+    st = wd_state(page)
+    assert st["sign_in_attempts"] == 1 and st["created"] == 1 and st["verified"] == 1
+    stored = vault.load(session, demo.id, "workday:acme", "login")
+    assert stored["password"] == "Stored-Pw-1" and stored["verified"] is True
