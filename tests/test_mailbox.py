@@ -467,3 +467,16 @@ def raw_at(sender, subject, body):
     msg["Message-ID"] = "<old@example.com>"
     msg.set_content(body)
     return msg.as_bytes()
+
+
+def test_save_mailbox_fills_a_blank_profile_email_but_never_overwrites_one(session, user):
+    user.profile = {**(user.profile or {}), "email": ""}
+    session.add(user)
+    session.commit()
+    save_mailbox(session, user, MailboxSettings.from_form({"email": "mai@gmail.com", "password": APP_PW}))
+    assert user.profile["email"] == "mai@gmail.com"
+    user.profile = {**user.profile, "email": "me@work.example"}
+    session.add(user)
+    session.commit()
+    save_mailbox(session, user, MailboxSettings.from_form({"email": "other@gmail.com", "password": APP_PW}))
+    assert user.profile["email"] == "me@work.example"

@@ -585,7 +585,8 @@ class Navigator:
         return imap_cfg
 
     def _email(self) -> str:
-        return str(self.profile.get("email") or getattr(self.user, "email", "") or "").strip()
+        mailbox = self.profile.get("mailbox") or {}
+        return str(self.profile.get("email") or getattr(self.user, "email", "") or mailbox.get("email") or "").strip()
 
     def handle_account_wall(self) -> NavOutcome | None:
         """Sign in with the stored account for this host, or create one. None means "carry on navigating";

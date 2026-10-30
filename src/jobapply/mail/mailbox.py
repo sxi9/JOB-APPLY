@@ -217,6 +217,9 @@ def save_mailbox(session: Session, user: User, settings: MailboxSettings) -> dic
         previous.get(k) != v
         for k, v in (("email", settings.email), ("imap_host", settings.imap_host), ("smtp_host", settings.smtp_host))
     )
+    if not str(profile.get("email") or "").strip():
+        # The mailbox address doubles as the application email until the user fills one in on Profile.
+        profile["email"] = settings.email
     profile["mailbox"] = {
         **previous,
         "provider": settings.provider,

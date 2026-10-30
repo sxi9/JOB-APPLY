@@ -304,7 +304,9 @@ class WorkdayAccount:
 
     @property
     def email(self) -> str:
-        return str((self.user.profile or {}).get("email") or self.user.email or "").strip()
+        profile = self.user.profile or {}
+        mailbox = profile.get("mailbox") or {}
+        return str(profile.get("email") or self.user.email or mailbox.get("email") or "").strip()
 
     def credentials(self) -> dict[str, Any] | None:
         """``{"username", "password", ...}`` for this tenant from the vault, or None."""

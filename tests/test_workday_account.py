@@ -619,3 +619,11 @@ def test_selectors_are_documented_and_the_honeypot_is_never_a_target():
     for key in ("email", "password", "verify_password", "create_checkbox"):
         assert "beecatcher" not in acc.SELECTORS[key] and "website" not in acc.SELECTORS[key]
     assert Path(acc.__file__).read_text(encoding="utf-8").count("beecatcher") >= 2
+
+
+def test_account_email_falls_back_to_the_mailbox_address(page, session, demo):
+    demo.profile = {**(demo.profile or {}), "email": "", "mailbox": {"email": "box@gmail.com"}}
+    demo.email = ""
+    assert make_account(page, demo, session).email == "box@gmail.com"
+    demo.profile = {**demo.profile, "email": "me@work.example"}
+    assert make_account(page, demo, session).email == "me@work.example"
