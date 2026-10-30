@@ -627,3 +627,35 @@ def test_account_email_falls_back_to_the_mailbox_address(page, session, demo):
     assert make_account(page, demo, session).email == "box@gmail.com"
     demo.profile = {**demo.profile, "email": "me@work.example"}
     assert make_account(page, demo, session).email == "me@work.example"
+
+
+DELAYED_CREATE = """<!doctype html><html><body>
+<div data-automation-id="applyFlowPage">
+  <div data-automation-id="progressBarActiveStep">Create Account/Sign In</div>
+  <div id="panel"><div class="skeleton"></div></div>
+</div>
+<script>
+setTimeout(() => {
+  document.getElementById('panel').innerHTML = `
+    <div data-automation-id="signInContent"><form data-automation-id="createAccountForm">
+      <input data-automation-id="email" type="text">
+      <input data-automation-id="password" type="password">
+      <input data-automation-id="verifyPassword" type="password">
+      <input data-automation-id="createAccountCheckbox" type="checkbox">
+      <button type="button" data-automation-id="createAccountSubmitButton"
+        onclick="document.getElementById('panel').innerHTML='<div data-automation-id=verifyEmailContent>Check your email for a verification code</div><input data-automation-id=verificationCode>'">Create Account</button>
+    </form></div>`;
+}, 1500);
+</script></body></html>"""
+
+
+def test_create_account_waits_for_the_sign_in_panel_to_render(page, session, demo, vault):
+    """Live Workday reports the sign-in step from the progress bar while its panel is still a skeleton; the
+    form controls must be awaited, not read once."""
+    route_tenant(page, DELAYED_CREATE)
+    page.goto(TENANT.apply_manually_url, wait_until="domcontentloaded")
+    account = make_account(page, demo, session, vault)
+    assert account.state() == "login"  # skeleton: only the progress bar label says sign-in
+    creds = account.new_credentials()
+    assert account.create_account(account.email, creds["password"]) == "verify"
+    assert account.created is True

@@ -368,6 +368,18 @@ class WorkdayAccount:
             state = self.state()
         return state
 
+    def _wait_controls(self, keys: tuple[str, ...], timeout_ms: int = 20_000, poll_ms: int = 500) -> bool:
+        """Wait until any of the named controls is visible. The sign-in step reports ``login`` from its progress
+        bar label while its panel is still a loading skeleton, so the form controls must be awaited before
+        anything is read, clicked or typed."""
+        waited = 0
+        while waited <= timeout_ms:
+            if any(_visible(self.page, self.sel[k]) is not None for k in keys):
+                return True
+            self.page.wait_for_timeout(poll_ms)
+            waited += poll_ms
+        return False
+
     def _click(self, key: str, timeout: int = 10_000) -> bool:
         loc = _visible(self.page, self.sel[key])
         if loc is None:
@@ -430,6 +442,7 @@ class WorkdayAccount:
         """Type the stored credentials into the sign-in form and submit it. Returns the resulting state
         (``wizard`` on success, ``login`` when Workday rejected them, ``verify`` when it wants the email
         confirmed first)."""
+        self._wait_controls(("email", "sign_in_with_email", "sign_in_link"))
         if _visible(self.page, self.sel["email"]) is None:
             if self._click("sign_in_with_email"):
                 self._settle()
@@ -451,6 +464,7 @@ class WorkdayAccount:
     def create_account(self, email: str, password: str) -> str:
         """Fill the create-account form (email, password twice, the one required checkbox) and submit it.
         The caller decides whether creating is allowed (never under the global dry run)."""
+        self._wait_controls(("verify_password", "email", "sign_in_with_email", "create_link"))
         if _visible(self.page, self.sel["verify_password"]) is None:
             if _visible(self.page, self.sel["email"]) is None:
                 if self._click("sign_in_with_email"):
