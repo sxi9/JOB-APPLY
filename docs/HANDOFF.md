@@ -79,9 +79,18 @@ from a laptop without a checkout: edit/test on the box over ssh, commit there, r
 a bare clone (`git fetch ssh://box/home/saibala/jobapply +main:refs/heads/main && git push`), deploy with
 `deploy/deploy-user.sh --no-pull`.
 
+## WhatsApp bot (2026-11-05, live)
+
+The bridge POSTs every inbound text to `POST /api/whatsapp/inbound` (header `X-Webhook-Secret`, secret in both
+`.env` files; bridge patch kept at `~/whatsapp-headless/patches/webhook.patch`). `bot/whatsapp.py` onboards a
+number by chat (name → field numbers → city), `bot/dispatch.py` DMs matching jobs (claimed before send),
+`bot/groups.py` answers `!` commands only in groups that have a feed. Share link: `https://wa.me/<bridge
+number>?text=start`. The JOB-APPLY group has feed `3404b723` (cybersecurity + software engineering, India,
+24 h). Admin → Subscribers card lists people and the share link. CLI: `jobapply bot subscribers|dispatch|simulate`.
+
 ## Known gaps / next candidates
 
-Subscriber bot over WhatsApp (inbound webhook in the bridge + name/field onboarding); student preset + internship feed; invite/approval access control with free plan caps; scheduler tasks for assisted sites and Workday
+student preset + internship feed; invite/approval access control with free plan caps; scheduler tasks for assisted sites and Workday
 (CLI entry points only today); `applied_today(site="external")` counts 0 for unknown hosts; a Workday host
 reached via redirect inside the navigator pauses instead of re-queuing under workday; hosted deploy with HTTPS
 and consent/terms; LinkedIn li_at rotation (re-login once, then reconnect).
