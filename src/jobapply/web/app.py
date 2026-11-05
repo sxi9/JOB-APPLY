@@ -27,6 +27,7 @@ from jobapply.web.routes import (
     queue,
     referrals,
     settings,
+    whatsapp,
 )
 
 
@@ -56,6 +57,6 @@ def create_app(engine: Engine | None = None, secret_key: str | None = None) -> F
         return {"ok": True}
 
     for module in (auth, home, jobs, coverage, queue, applications, inbox, referrals, profile, settings, onboarding,
-                   admin):
+                   admin, whatsapp):
         app.include_router(module.router)
     return app

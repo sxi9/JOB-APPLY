@@ -135,6 +135,51 @@
   </form>
 </section>
 
+<section class="card" style="margin-top:16px" id="subscribers">
+  <h2>Subscribers <span class="badge">{{ subscriber_active }} active / {{ subscribers | length }}</span>
+    {% if not bot_enabled %}<span class="chip chip-amber">bot disabled (JOBAPPLY_WHATSAPP_BOT_ENABLED)</span>
+    {% elif not bot_secret_set %}<span class="chip chip-amber">webhook secret unset</span>
+    {% else %}<span class="chip chip-green">bot on</span>{% endif %}</h2>
+  <p class="muted small">People subscribe by sending <strong>START</strong> to the bridge's number in a WhatsApp chat: the bot asks for their name, career fields and location, then every collect run DMs them the new matching jobs (batches of 8, at most 3 messages per run, never the same job twice). They need no account. Commands: STATUS, FIELDS, LOCATION, STOP, RESUME, HELP. Groups with a feed answer <code>!jobs</code>, <code>!intern</code>, <code>!remote</code>, <code>!latest</code>, <code>!help</code> and (admins) <code>!feed ...</code>.</p>
+  {% if bot_share_link %}
+  <p class="small">Share link{{ ' (' ~ bot_owner_masked ~ ')' if bot_owner_masked }}: <a href="{{ bot_share_link }}" target="_blank" rel="noopener">{{ bot_share_link }}</a></p>
+  {% else %}<p class="small muted">Share link: the bridge is {{ bridge.status }}; it appears when the bridge is open.</p>{% endif %}
+  {% if subscriber_counts %}
+  <p class="small">By field (active): {% for label, n in subscriber_counts %}<span class="chip chip-blue">{{ label }} · {{ n }}</span> {% endfor %}</p>
+  {% endif %}
+
+  {% if subscriber_preview %}
+  <div class="card" style="margin:8px 0 12px">
+    <h3>Dry run · next dispatch</h3>
+    <p class="small muted">{{ subscriber_preview.subscribers | length }} subscriber(s) checked; {{ subscriber_preview.subscribers | map(attribute='messages') | map('length') | sum }} message(s) would be sent. Nothing was sent, nothing was recorded.</p>
+    {% for r in subscriber_preview.subscribers %}
+    <p class="small"><strong>{{ r.target }}</strong> {{ r.name }}{% if r.skipped %} — skipped: {{ r.skipped }}{% else %} — {{ r.candidates }} matching job(s), {{ r.messages | length }} message(s){% endif %}{% if r.error %} — {{ r.error }}{% endif %}</p>
+    {% for m in r.messages %}<pre class="small" style="white-space:pre-wrap;border:1px solid var(--border);border-radius:6px;padding:8px">{{ m }}</pre>{% endfor %}
+    {% else %}<p class="empty">No subscribers yet.</p>{% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="table-wrap"><table>
+    <thead><tr><th>Number</th><th>Name</th><th>Fields</th><th>Location</th><th>State</th><th>Last message</th><th>Posted</th><th></th></tr></thead>
+    {% for s in subscribers %}
+    <tr>
+      <td class="mono">{{ s.target }}</td>
+      <td>{{ s.name or '—' }}</td>
+      <td class="small">{{ s.fields or '—' }}</td>
+      <td class="small">{{ s.location }}</td>
+      <td>{% if not s.active %}<span class="chip chip-gray">paused</span>{% elif s.state == 'active' %}<span class="chip chip-green">active</span>{% else %}<span class="chip chip-amber">{{ s.state }}</span>{% endif %}</td>
+      <td class="small">{% if s.last_message_at %}{{ s.last_message_at | dt }}{% else %}<span class="muted">never</span>{% endif %}</td>
+      <td>{{ s.posted }}</td>
+      <td><div class="row">
+        <form method="post" action="/admin/subscribers/{{ s.id }}/{{ 'reactivate' if not s.active else 'suspend' }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sm">{{ 'Reactivate' if not s.active else 'Suspend' }}</button></form>
+        <form method="post" action="/admin/subscribers/{{ s.id }}/remove" onsubmit="return confirm('Delete this subscriber and their posted-job records?')"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sm btn-danger">Delete</button></form>
+      </div></td>
+    </tr>
+    {% else %}<tr><td colspan="8" class="empty">No subscribers yet. Share the link above.</td></tr>{% endfor %}
+  </table></div>
+  <form method="post" action="/admin/subscribers/preview" style="margin-top:12px"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn">Send test post (dry run)</button></form>
+</section>
+
 <section class="card" style="margin-top:16px">
   <h2>LLM providers <span class="badge">backend: {{ llm_backend }}</span></h2>
   <p class="muted small">Server failover order from <code>JOBAPPLY_LLM_PROVIDERS</code>, one row per server key (keys of one provider rotate round-robin and cool down one at a time). Health is for this process since start; usage is the last 30 days.</p>

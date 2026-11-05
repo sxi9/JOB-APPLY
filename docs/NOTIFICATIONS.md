@@ -1,9 +1,11 @@
-# Notifications: WhatsApp alerts, the apply mode and group feeds
+# Notifications: WhatsApp alerts, the apply mode, group feeds and the subscriber bot
 
 Code: `notify.py` (bridge transport, targets, groups, health), `pipeline/alerts.py` (new-job and outcome
 alerts, the per-user mode), `web/routes/settings.py` (the Notifications card, the test button),
-`cli_alerts.py` (`jobapply alerts ...`), `pipeline/feeds.py` + `cli_feeds.py` (admin group feeds, see the
-last section). Tests: `tests/test_alerts.py`, `tests/test_notify.py`, `tests/test_feeds.py`, `tests/test_web.py`.
+`cli_alerts.py` (`jobapply alerts ...`), `pipeline/feeds.py` + `cli_feeds.py` (admin group feeds),
+`bot/whatsapp.py` + `bot/dispatch.py` + `bot/groups.py` + `cli_bot.py` (the subscriber bot, last section).
+Tests: `tests/test_alerts.py`, `tests/test_notify.py`, `tests/test_feeds.py`, `tests/test_bot.py`,
+`tests/test_bot_dispatch.py`, `tests/test_web.py`.
 
 ## The bridge
 
@@ -231,8 +233,171 @@ jobapply feeds enable <id> | disable <id> | remove <id>
 `--field` takes a career-field key (`cybersecurity`, expanded to `cybersecurity:*`) or `field:subrole`;
 an unknown key exits 2 with the list of known ones. Group jids come from `jobapply alerts groups`.
 
+## Subscriber bot
+
+`bot/whatsapp.py` (the conversation engine), `bot/dispatch.py` (posting), `bot/groups.py` (group commands),
+`web/routes/whatsapp.py` (the webhook), `cli_bot.py` (`jobapply bot ...`), the **Subscribers** card on
+`/admin`, migration `0007` (`subscribers`, `subscriber_posts`). Tests: `tests/test_bot.py`,
+`tests/test_bot_dispatch.py`, `tests/test_web.py`.
+
+Anyone can get job posts by WhatsApp **without a JOB-APPLY account**: they DM the bridge's number, the bot asks
+three questions and from then on every collect run DMs them the new jobs that match. Settings:
+`JOBAPPLY_WHATSAPP_BOT_ENABLED` (default true; false = the webhook answers but nothing is posted or replied)
+and `JOBAPPLY_WHATSAPP_WEBHOOK_SECRET` (the shared secret below; empty = the webhook answers 503).
+
+### How people join
+
+The share link on the admin card is `https://wa.me/<bridge number digits>?text=start` (the digits come from
+the bridge's `GET /health` `me`; the UI shows the number masked, only the link carries it). Opening it starts
+a chat with the bridge's number with *start* prefilled. The conversation:
+
+```
+you:  start                      (also HI / HELLO; any other first text from an unknown number is ignored -
+                                  the bridge is a real phone)
+bot:  Hi! I'm the *JOB-APPLY* job alerts bot. I'll message you here when new jobs matching your career
+      field and location show up.
+
+      Replies here are automated. Send *STOP* at any time to pause the alerts, *HELP* for all commands.
+
+      First, what's your name?
+you:  Priya
+bot:  Thanks, Priya! Which career fields do you want jobs for? Reply with the numbers (e.g. *1, 9*) or
+      type the names.
+
+      1. Cybersecurity
+      2. Software Engineering
+      3. DevOps / SRE / Infrastructure
+      4. Data & AI
+      5. Product Management
+      6. Design
+      7. QA / Test Engineering
+      8. IT Support / Sysadmin / Network
+      9. Cloud Engineering
+      10. Project / Program Management
+      11. Sales
+      12. Marketing
+      13. Finance & Accounting
+      14. HR / People
+      15. Customer Success & Support
+      16. Internships (students)
+you:  1, 9                       (numbers, comma or space separated; names work too: "cyber and cloud")
+bot:  Got it: *Cybersecurity, Cloud Engineering*. Where do you want jobs? Reply with a city (e.g. *Pune*),
+      *remote*, or *any*. You can combine them: *Bengaluru, remote*.
+you:  Pune, remote
+bot:  You're all set, Priya! ✅  Fields: ... Location: *Pune, remote* ... Commands: STATUS, FIELDS,
+      LOCATION, STOP, HELP.
+```
+
+States (`subscribers.state`): `new` -> `asked_name` -> `asked_fields` -> `asked_location` -> `active`
+(FIELDS / LOCATION from an active subscriber pass through `edit_fields` / `edit_location`). The list is
+`roles.all_fields()` (15 fields) plus *Internships (students)*, stored as the pseudo-field `intern` in
+`subscribers.fields` (= seniority intern). A location reply containing *remote* sets `remote_ok`; *any*
+means anywhere.
+
+Commands, case-insensitive, in any state: **START / HI / HELLO** (begin, or resume an unfinished sign-up),
+**STOP** (pause: `active=false`, confirmed), **RESUME**, **FIELDS** (pick again), **LOCATION**, **STATUS**
+(what they subscribed to), **HELP**. Other text from an active subscriber gets one short help line, at most
+once per 10 minutes per number; more than 20 texts per number per hour are dropped silently. Group messages
+are ignored except for the `!` commands below. Every message is short, plain WhatsApp text (`*bold*`), at
+most one emoji.
+
+### What they get
+
+`bot.dispatch.notify_subscribers(session, new_job_ids)` runs at the end of every `collect.run_all` (after
+the user alerts and the group feeds, in its own try/except) and from `jobapply bot dispatch` / the admin
+card. Per active subscriber with a finished sign-up: the new jobs (or, without ids, the jobs first seen in
+the last 24 h) that pass **the users' matcher** (`pipeline.filters.match`) with filters built from the row -
+`role_selection = [field:*, ...]`, `seniority = ["intern"]` when internships were picked (internships only
+when no field was picked), `locations = [location]` plus `remote`, no remote-only, `max_age_hours = 48` -
+minus what `subscriber_posts` already holds. Newest first, batches of 8 jobs, at most **3 messages per
+subscriber and run**; the rest goes out next run.
+
+**Claim before send.** The batch's `subscriber_posts` rows (unique per subscriber and job) are committed
+*before* the DM and deleted again when the send fails, so a job never reaches a number twice (not even from
+two overlapping runs) and a failed send is retried next run. One message (the feed job block, no dashboard
+link):
+
+```
+🆕 2 new jobs for you — 14:05 IST, 05 Nov
+
+*SOC Analyst* — Acme Inc · Pune
+🕒 posted 12 min ago (13:53 IST, 05 Nov) · via greenhouse
+https://apply.example/1
+
+*Cloud Engineer* — ...
+
+Reply STOP to pause these alerts.
+```
+
+### Group commands
+
+A WhatsApp group that has a **feed** (Group feeds card, `group_jid`) answers texts that start with `!`;
+any other group message, and every message in a group without a feed, is ignored. One command per group
+per minute (extras dropped silently); a reply never carries more than 8 jobs or ~3500 characters and goes
+back to the same group.
+
+| command | reply |
+| --- | --- |
+| `!jobs [field] [city] [Nh\|Nd]` | up to 8 matching jobs from the pool, newest first - default the feed's own filters and the last 24 h; the words resolve like the DM bot's (field label words or list numbers, `24h` / `3d`, the rest is the location), in any order: `!jobs cyber bengaluru 48h` |
+| `!intern [city]` | internships only (seniority intern) inside the feed's filters |
+| `!remote [field]` | remote jobs |
+| `!latest` | the newest 5 jobs matching the feed, any age |
+| `!help` | the list |
+| `!feed status` | the feed's filters, state and counters |
+| `!feed location <city>[, <city>]` / `any`, `!feed field <name\|number>`, `!feed hours <N>`, `!feed pause`, `!feed resume` | **admin only**: edit that group's feed in place (same `update_feed` as the admin card) |
+
+Admin = the sender is the bridge's own number (`bridge_health` / `notify.bridge_me_digits`) or the
+`whatsapp_number` of an admin dashboard user; anyone else gets *Sorry, only an admin can change this feed.*
+
+### Admin card
+
+`/admin` -> **Subscribers** (admin only, CSRF on every POST): the bot chip (on / disabled / secret unset),
+the share link, the count of active subscribers per field, and the table (masked number `••••1234`, name,
+fields, location, state, last message, posted count) with per-row **Suspend** / **Reactivate**
+(`POST /admin/subscribers/<id>/suspend`, `/reactivate`) and **Delete** (`/remove`, also drops the
+posted-job rows; the person can START again). **Send test post (dry run)** (`POST /admin/subscribers/preview`)
+renders what the next dispatch would send per subscriber; nothing is sent or recorded.
+
+### CLI
+
+```
+jobapply bot subscribers                       # id, on/off, masked number, name, state, fields, location
+jobapply bot dispatch [--dry-run]              # post (or print) each subscriber's new matches
+jobapply bot simulate --from 9198...@s.whatsapp.net "start"   # one inbound text through the engine
+```
+
+`simulate` prints the replies through a fake sender - nothing is ever sent - but the subscriber row changes
+exactly as in a real chat, so use a test number (and `--from <group jid>` for `!` commands).
+
+### The bridge webhook
+
+The bridge (`~/whatsapp-headless`, Express + Baileys) POSTs every inbound text to JOB-APPLY:
+
+- `src/config.js`: `webhookUrl` / `webhookSecret` from `WEBHOOK_URL` / `WEBHOOK_SECRET` in its `.env`
+  (empty URL = off).
+- `src/api.js`: next to the `wa.on('message')` SSE broadcast, `postWebhook(rec)` fires for every record that
+  is inbound (`!fromMe`), not a history-sync replay (`meta.history`), not `status@broadcast` and has text:
+  `POST WEBHOOK_URL` with JSON `{id, chat, from, phone, pushName, text, isGroup, ts}` and the header
+  `X-Webhook-Secret: <secret>`, 5 s timeout, fire-and-forget (failures are one warning in the bridge log,
+  nothing is retried). `phone` is the `...@s.whatsapp.net` jid when the bridge knows it (chats may show a
+  `@lid` jid); the bot answers `phone` first, then `chat`.
+- `.env` of the bridge: `WEBHOOK_URL=http://127.0.0.1:8010/api/whatsapp/inbound` and `WEBHOOK_SECRET=<hex>`
+  (`openssl rand -hex 24`); the same value is `JOBAPPLY_WHATSAPP_WEBHOOK_SECRET` in `~/jobapply/.env`.
+  Restart with `systemctl --user restart whatsapp-headless.service`, check `GET /api/health` says `open`.
+
+`POST /api/whatsapp/inbound` (`web/routes/whatsapp.py`, no login, no CSRF) answers 503 while the secret is
+unset, 401 when the header does not match, and otherwise `{"ok": true, "replies": n}` - a bad payload or a
+bot error is logged, never raised back to the bridge. `bot.whatsapp.handle` runs in a worker thread.
+
+**Carrying the bridge patch to its repo.** `~/whatsapp-headless` on the box is a plain copy, not a checkout;
+the untouched originals are `src/api.js.bak-bot` and `src/config.js.bak-bot` and the unified diff is
+`~/whatsapp-headless/patches/webhook.patch` (`diff -u` of the `.bak-bot` files against the patched ones).
+In the bridge repo: `git apply patches/webhook.patch`, add `WEBHOOK_URL` / `WEBHOOK_SECRET` to its
+`.env.example`, and document the payload above in its `API.md`.
+
 ## Tests never touch the live bridge
 
 `tests/conftest.py` installs the log-only notifier before every test (the box's `.env` points at the live
 bridge on the owner's phone); tests that need a transport build a `WhatsAppNotifier` on an
-`httpx.MockTransport` or install a spy with `set_notifier`.
+`httpx.MockTransport` or install a spy with `set_notifier`. The bot tests pass a fake `send` to
+`bot.whatsapp.handle`, and the dispatch tests use the spy; the webhook tests post to the TestClient only.

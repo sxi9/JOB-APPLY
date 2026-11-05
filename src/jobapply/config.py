@@ -105,6 +105,11 @@ class Settings(BaseSettings):
     whatsapp_base_url: str | None = None
     whatsapp_token: SecretStr | None = None
     public_url: str = "http://192.168.29.22:8010"
+    # Subscriber bot (bot/whatsapp.py): people DM the bridge's number, pick career fields and a location and
+    # get new matching jobs by WhatsApp. The bridge POSTs every inbound text to /api/whatsapp/inbound with the
+    # shared secret (WEBHOOK_SECRET in the bridge's .env); unset secret = endpoint off (503).
+    whatsapp_bot_enabled: bool = True
+    whatsapp_webhook_secret: str = ""
 
     # Browser. Leave empty to use Playwright's bundled Chromium.
     chromium_executable: str | None = None

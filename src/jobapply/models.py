@@ -1,6 +1,7 @@
 """Database models.
 
-Shared tables: jobs, job_sources, form_profiles, collector_runs, app_settings, feed_posts.
+Shared tables: jobs, job_sources, form_profiles, collector_runs, app_settings, feed_posts, subscribers,
+subscriber_posts.
 Per-user tables (always queried with user_id): users, user_sites, applications,
 application_events, answers_bank, credentials, mail_messages, llm_usage.
 """
@@ -292,6 +293,47 @@ class FeedPost(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     feed_id: str = Field(index=True)
+    job_id: int = Field(foreign_key="jobs.id", index=True)
+    posted_at: datetime = Field(default_factory=utcnow)
+
+
+# ---------------------------------------------------------------- WhatsApp subscribers (bot/whatsapp.py)
+
+SUBSCRIBER_STATES = ("new", "asked_name", "asked_fields", "asked_location", "active")
+INTERN_FIELD = "intern"  # pseudo-field in Subscriber.fields: seniority "intern" instead of a taxonomy field
+
+
+class Subscriber(SQLModel, table=True):
+    """Someone who DMed the bridge's WhatsApp number and subscribed to job posts (no dashboard account).
+    `fields` is a JSON list of taxonomy field keys (`cybersecurity`, ...) plus the pseudo-field `intern`;
+    `state` is the onboarding step (SUBSCRIBER_STATES); `active` False means paused with STOP (or by an admin).
+    Written by the conversation engine and the admin card only."""
+
+    __tablename__ = "subscribers"
+
+    id: int | None = Field(default=None, primary_key=True)
+    phone_jid: str = Field(index=True, unique=True)  # 9198...@s.whatsapp.net
+    name: str = ""
+    fields: list = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    location: str = ""  # free text; "" means anywhere
+    remote_ok: bool = False
+    active: bool = True
+    state: str = "new"
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+    last_message_at: datetime | None = None
+    source: str = "whatsapp"
+
+
+class SubscriberPost(SQLModel, table=True):
+    """A job posted (or claimed for posting) to one subscriber; unique per subscriber and job. Written BEFORE
+    the send and deleted again when the send fails (bot/dispatch.py), so a job never reaches a number twice."""
+
+    __tablename__ = "subscriber_posts"
+    __table_args__ = (UniqueConstraint("subscriber_id", "job_id"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    subscriber_id: int = Field(foreign_key="subscribers.id", index=True)
     job_id: int = Field(foreign_key="jobs.id", index=True)
     posted_at: datetime = Field(default_factory=utcnow)
 

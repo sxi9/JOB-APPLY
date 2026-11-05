@@ -116,6 +116,17 @@ class WhatsAppNotifier:
         return {"ok": status == "open", "status": status, "me_masked": mask_target(str(data.get("me") or ""))}
 
 
+    def me(self) -> str:
+        """The bridge account's own jid (`91...@s.whatsapp.net`) from GET /health, unmasked; "" on any error.
+        Only for the subscriber bot's share link - never log or show it (`mask_target` for that)."""
+        try:
+            resp = self.client.get(f"{self.base_url}/health", headers=self._headers, timeout=READ_TIMEOUT)
+            data = resp.json() if resp.status_code < 300 else {}
+        except (httpx.HTTPError, ValueError):
+            return ""
+        return str(data.get("me") or "") if isinstance(data, dict) else ""
+
+
 class MultiNotifier:
     """Fan out to several backends; succeeds when any of them does."""
 
@@ -244,6 +255,16 @@ def list_groups(*, refresh: bool = False) -> list[dict]:
     # an empty answer is usually a bridge hiccup: keep it only briefly so the next page load retries
     _groups_cache = (now + (GROUPS_CACHE_SECONDS if groups else EMPTY_CACHE_SECONDS), groups)
     return list(groups)
+
+
+def bridge_me_digits() -> str:
+    """Digits of the bridge account's own number (for a `https://wa.me/<digits>` share link); "" without a
+    bridge or when it is down. Never logged."""
+    backend = whatsapp_backend()
+    if backend is None:
+        return ""
+    local = backend.me().partition("@")[0]
+    return "".join(ch for ch in local if ch.isdigit())
 
 
 def bridge_health() -> dict:

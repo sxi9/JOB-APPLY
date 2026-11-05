@@ -5,13 +5,15 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from sqlalchemy import func
+from sqlalchemy import delete, func
 from sqlmodel import select
 
 from jobapply.ai.providers import health_key, parse_order, provider_status, server_configs
+from jobapply.bot.dispatch import notify_subscribers
+from jobapply.bot.whatsapp import field_labels, field_options, location_label
 from jobapply.config import get_settings
-from jobapply.models import Application, CollectorRun, Job, LlmUsage, Role, User, utcnow
-from jobapply.notify import bridge_health, list_groups
+from jobapply.models import Application, CollectorRun, Job, LlmUsage, Role, Subscriber, SubscriberPost, User, utcnow
+from jobapply.notify import bridge_health, bridge_me_digits, list_groups, mask_target
 from jobapply.pipeline.feeds import (
     DEFAULT_MAX_AGE_HOURS,
     DEFAULT_MAX_PER_RUN,
@@ -229,7 +231,8 @@ def _feeds_context(s, edit_id: str | None = None) -> dict:
 
 @router.get("")
 def admin_page(ctx: Ctx = Depends(admin_ctx), feed: str | None = None):
-    return ctx.render("admin.html", **_admin_context(ctx), **_feeds_context(ctx.session, feed))
+    return ctx.render("admin.html", **_admin_context(ctx), **_feeds_context(ctx.session, feed),
+                      **_subscribers_context(ctx.session))
 
 
 def _feed_from_form(form: dict) -> dict:
@@ -313,7 +316,8 @@ async def preview_feed(fid: str, request: Request, ctx: Ctx = Depends(admin_ctx)
     await read_form(request)
     feed = _feed_or_404(ctx, fid)
     result = run_feed(ctx.session, feed, None, dry_run=True, ignore_disabled=True)
-    return ctx.render("admin.html", **_admin_context(ctx), **_feeds_context(ctx.session), feed_preview=result)
+    return ctx.render("admin.html", **_admin_context(ctx), **_feeds_context(ctx.session),
+                      **_subscribers_context(ctx.session), feed_preview=result)
 
 
 @router.post("/feeds/{fid}/run")
@@ -332,3 +336,89 @@ async def run_feed_now(fid: str, request: Request, ctx: Ctx = Depends(admin_ctx)
                        f"({r['candidates']} matched)")
     return RedirectResponse("/admin#feeds", status_code=303)
 
+
+
+# ----------------------------------------------------------------- WhatsApp subscribers (bot/whatsapp.py)
+
+
+def _subscribers_context(s) -> dict:
+    """The Subscribers card: every subscriber (number masked), the count of active subscribers per field, the
+    share link (the bridge's own number, shown masked next to it) and the bot switches."""
+    settings = get_settings()
+    subs = s.exec(select(Subscriber).order_by(Subscriber.created_at.desc())).all()
+    posted = dict(s.exec(select(SubscriberPost.subscriber_id, func.count())
+                         .group_by(SubscriberPost.subscriber_id)).all())
+    labels = dict(field_options())
+    counts: dict[str, int] = {}
+    for sub in subs:
+        if sub.active and sub.state == "active":
+            for key in sub.fields or []:
+                if key in labels:
+                    counts[labels[key]] = counts.get(labels[key], 0) + 1
+    rows = [{
+        "id": sub.id, "target": mask_target(sub.phone_jid), "name": sub.name, "state": sub.state,
+        "fields": ", ".join(field_labels(sub.fields)), "location": location_label(sub), "active": sub.active,
+        "last_message_at": sub.last_message_at, "posted": int(posted.get(sub.id, 0)),
+    } for sub in subs]
+    digits = bridge_me_digits() if settings.whatsapp_base_url else ""
+    return {
+        "subscribers": rows,
+        "subscriber_counts": sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])),
+        "subscriber_active": sum(1 for sub in subs if sub.active and sub.state == "active"),
+        "bot_share_link": f"https://wa.me/{digits}?text=start" if digits else "",
+        "bot_owner_masked": mask_target(digits),
+        "bot_enabled": settings.whatsapp_bot_enabled,
+        "bot_secret_set": bool(settings.whatsapp_webhook_secret),
+    }
+
+
+def _subscriber_or_404(ctx: Ctx, sid: int) -> Subscriber:
+    sub = ctx.session.get(Subscriber, sid)
+    if sub is None:
+        raise HTTPException(404, "no such subscriber")
+    return sub
+
+
+@router.post("/subscribers/{sid}/suspend")
+async def suspend_subscriber(sid: int, request: Request, ctx: Ctx = Depends(admin_ctx)):
+    await read_form(request)
+    sub = _subscriber_or_404(ctx, sid)
+    sub.active = False
+    sub.updated_at = utcnow()
+    ctx.session.add(sub)
+    ctx.session.commit()
+    flash(request, f"Subscriber {mask_target(sub.phone_jid)} suspended; nothing is posted until reactivated")
+    return RedirectResponse("/admin#subscribers", status_code=303)
+
+
+@router.post("/subscribers/{sid}/reactivate")
+async def reactivate_subscriber(sid: int, request: Request, ctx: Ctx = Depends(admin_ctx)):
+    await read_form(request)
+    sub = _subscriber_or_404(ctx, sid)
+    sub.active = True
+    sub.updated_at = utcnow()
+    ctx.session.add(sub)
+    ctx.session.commit()
+    flash(request, f"Subscriber {mask_target(sub.phone_jid)} reactivated")
+    return RedirectResponse("/admin#subscribers", status_code=303)
+
+
+@router.post("/subscribers/{sid}/remove")
+async def remove_subscriber(sid: int, request: Request, ctx: Ctx = Depends(admin_ctx)):
+    await read_form(request)
+    sub = _subscriber_or_404(ctx, sid)
+    ctx.session.execute(delete(SubscriberPost).where(SubscriberPost.subscriber_id == sid))
+    ctx.session.delete(sub)
+    ctx.session.commit()
+    flash(request, f"Subscriber {mask_target(sub.phone_jid)} deleted (they can send START again any time)")
+    return RedirectResponse("/admin#subscribers", status_code=303)
+
+
+@router.post("/subscribers/preview")
+async def preview_subscribers(request: Request, ctx: Ctx = Depends(admin_ctx)):
+    """Dry run: render the admin page with what the next dispatch would send per subscriber; nothing sent or
+    recorded."""
+    await read_form(request)
+    result = notify_subscribers(ctx.session, None, dry_run=True)
+    return ctx.render("admin.html", **_admin_context(ctx), **_feeds_context(ctx.session),
+                      **_subscribers_context(ctx.session), subscriber_preview=result)

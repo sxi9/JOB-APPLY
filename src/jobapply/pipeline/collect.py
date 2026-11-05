@@ -1,5 +1,5 @@
-"""Run collectors, store their jobs, hand new jobs to each user's filters, then post the WhatsApp alerts
-and group feeds."""
+"""Run collectors, store their jobs, hand new jobs to each user's filters, then post the WhatsApp alerts,
+group feeds and subscriber posts."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from datetime import timedelta
 from sqlalchemy.engine import Engine
 from sqlmodel import select
 
+from jobapply.bot.dispatch import notify_subscribers
 from jobapply.collectors.base import BaseCollector
 from jobapply.collectors.registry import SearchConfig, build_collectors, load_searches
 from jobapply.config import get_settings
@@ -149,10 +150,17 @@ def run_all(only: list[str] | None = None, collectors: list[BaseCollector] | Non
             except Exception as exc:  # noqa: BLE001
                 log.warning("group feeds failed", error=f"{type(exc).__name__}: {exc}"[:300])
                 feeds = {}
+            # WhatsApp subscribers (bot/dispatch.py): the new jobs that match a subscriber's fields and
+            # location are DMed to them. Same rule: best effort, logged, never a failed collect.
+            try:
+                subscribers = notify_subscribers(session, new_ids)["posted"]
+            except Exception as exc:  # noqa: BLE001
+                log.warning("subscriber posts failed", error=f"{type(exc).__name__}: {exc}"[:300])
+                subscribers = 0
     log.info("collect done", collectors=len(collectors), queries=queries_ran, new_jobs=len(new_ids),
-             alerts=sum(alerts.values()), feed_posts=sum(feeds.values()))
+             alerts=sum(alerts.values()), feed_posts=sum(feeds.values()), subscriber_posts=subscribers)
     return {"collectors": len(collectors), "queries": queries_ran, "new_jobs": len(new_ids),
-            "assigned": assigned, "alerts": alerts, "feeds": feeds}
+            "assigned": assigned, "alerts": alerts, "feeds": feeds, "subscribers": subscribers}
 
 
 def coverage_stats(session) -> dict:

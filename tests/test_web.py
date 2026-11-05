@@ -1001,3 +1001,135 @@ def test_group_feeds_are_admin_only_and_need_csrf(client, engine):
     with Session(engine) as s:
         assert [f["name"] for f in load_feeds(s)] == ["Sec"]
 
+
+
+# ----------------------------------------------------------------- subscriber bot: webhook and admin card
+
+SUB_JID = "919876543210@s.whatsapp.net"
+
+
+def _secret(monkeypatch, value):
+    from jobapply.config import get_settings
+
+    monkeypatch.setenv("JOBAPPLY_WHATSAPP_WEBHOOK_SECRET", value)
+    get_settings.cache_clear()
+
+
+def test_whatsapp_inbound_endpoint_auth_and_replies(client, engine, monkeypatch):
+    from jobapply.bot import whatsapp as bot
+    from jobapply.models import Subscriber
+
+    bot.reset_throttles()
+    payload = {"id": "m1", "chat": SUB_JID, "from": SUB_JID, "pushName": "Priya", "text": "start",
+               "isGroup": False, "ts": "2026-11-05T08:30:00.000Z"}
+    # no login, no CSRF: the secret decides. Unset -> 503
+    _secret(monkeypatch, "")
+    assert client.post("/api/whatsapp/inbound", json=payload).status_code == 503
+    _secret(monkeypatch, "s3cret-s3cret")
+    assert client.post("/api/whatsapp/inbound", json=payload).status_code == 401
+    assert client.post("/api/whatsapp/inbound", json=payload, headers={"X-Webhook-Secret": "nope"}).status_code == 401
+    ok = {"X-Webhook-Secret": "s3cret-s3cret"}
+    resp = client.post("/api/whatsapp/inbound", json=payload, headers=ok)
+    assert resp.status_code == 200 and resp.json() == {"ok": True, "replies": 1}
+    with Session(engine) as s:
+        sub = s.exec(select(Subscriber).where(Subscriber.phone_jid == SUB_JID)).one()
+        assert sub.state == "asked_name" and sub.active
+    # a bad body, a group without a feed and the bot's own messages: still 200, nothing done
+    resp = client.post("/api/whatsapp/inbound", content=b"not json", headers={**ok, "Content-Type": "application/json"})
+    assert resp.status_code == 200 and resp.json()["replies"] == 0
+    group = {**payload, "chat": "120363000000000009@g.us", "isGroup": True, "text": "!jobs"}
+    assert client.post("/api/whatsapp/inbound", json=group, headers=ok).json()["replies"] == 0
+    assert client.post("/api/whatsapp/inbound", json={**payload, "fromMe": True}, headers=ok).json()["replies"] == 0
+    # disabled bot: accepted, ignored
+    monkeypatch.setenv("JOBAPPLY_WHATSAPP_BOT_ENABLED", "false")
+    _secret(monkeypatch, "s3cret-s3cret")
+    resp = client.post("/api/whatsapp/inbound", json={**payload, "text": "Priya"}, headers=ok)
+    assert resp.status_code == 200 and resp.json() == {"ok": True, "replies": 0, "disabled": True}
+    with Session(engine) as s:
+        assert s.exec(select(Subscriber)).one().name == ""
+    bot.reset_throttles()
+
+
+def test_admin_subscribers_card_actions_and_preview(client, engine):
+    from datetime import timedelta
+
+    from jobapply.models import Subscriber, SubscriberPost, utcnow
+    from jobapply.notify import set_notifier
+
+    _, csrf = login(client, "admin", "admin1234")
+    page = client.get("/admin").text
+    assert "Subscribers" in page and "No subscribers yet" in page and "Send test post (dry run)" in page
+    # the share link carries the bridge's number; everywhere else it is masked
+    set_notifier(_bridge_with_groups())
+    try:
+        page = client.get("/admin").text
+        assert 'href="https://wa.me/919876543210?text=start"' in page and "••••3210" in page
+        assert page.count("919876543210") == 2  # the href and the link text, nothing else
+    finally:
+        set_notifier(None)
+    with Session(engine) as s:
+        a = Subscriber(phone_jid=SUB_JID, name="Priya", fields=["cybersecurity", "cloud"], location="Pune",
+                       state="active", last_message_at=utcnow())
+        b = Subscriber(phone_jid="919876500000@s.whatsapp.net", name="Ravi", fields=["data"], location="",
+                       remote_ok=True, state="active", active=False)
+        c = Subscriber(phone_jid="919876511111@s.whatsapp.net", name="", fields=[], state="asked_name")
+        s.add_all([a, b, c])
+        s.commit()
+        s.add(Job(dedupe_key="sub-web-1", title="SOC Analyst", company="Acme", location="Pune",
+                  posted_at=utcnow() - timedelta(minutes=5), apply_url="https://apply.example/soc",
+                  source="greenhouse"))
+        s.commit()
+        aid, bid, cid = a.id, b.id, c.id
+    page = client.get("/admin").text
+    assert "••••3210" in page and "Priya" in page and "Cybersecurity, Cloud Engineering" in page and "Pune" in page
+    assert "••••0000" in page and "remote" in page and 'class="chip chip-gray">paused</span>' in page
+    assert 'class="chip chip-amber">asked_name</span>' in page and "1 active / 3" in page
+    assert "Cybersecurity · 1" in page and "Cloud Engineering · 1" in page
+    assert "Data &amp; AI" not in page.split("By field")[1].split("</p>")[0]  # paused: not counted
+    assert SUB_JID not in page and "919876500000" not in page
+    # dry run: the messages per subscriber, nothing sent or recorded
+    resp = client.post("/admin/subscribers/preview", data={"csrf": csrf})
+    assert resp.status_code == 200 and "Dry run · next dispatch" in resp.text
+    assert "\U0001f195 1 new job for you — " in resp.text and "*SOC Analyst* — Acme · Pune" in resp.text
+    assert "Reply STOP to pause these alerts." in resp.text and "skipped: paused" in resp.text
+    assert "skipped: onboarding (asked_name)" in resp.text
+    with Session(engine) as s:
+        assert s.exec(select(SubscriberPost)).all() == []
+    # suspend / reactivate / delete
+    assert client.post(f"/admin/subscribers/{aid}/suspend", data={"csrf": csrf}).status_code == 303
+    with Session(engine) as s:
+        assert s.get(Subscriber, aid).active is False
+    assert "suspended" in client.get("/admin").text
+    assert client.post(f"/admin/subscribers/{bid}/reactivate", data={"csrf": csrf}).status_code == 303
+    with Session(engine) as s:
+        assert s.get(Subscriber, bid).active is True
+        s.add(SubscriberPost(subscriber_id=cid, job_id=s.exec(select(Job.id)).first()))
+        s.commit()
+    assert client.post(f"/admin/subscribers/{cid}/remove", data={"csrf": csrf}).status_code == 303
+    with Session(engine) as s:
+        assert s.get(Subscriber, cid) is None and s.exec(select(SubscriberPost)).all() == []
+    assert client.post("/admin/subscribers/99999/suspend", data={"csrf": csrf}).status_code == 404
+
+
+def test_subscribers_card_is_admin_only_and_needs_csrf(client, engine):
+    from jobapply.models import Subscriber
+
+    with Session(engine) as s:
+        s.add(Subscriber(phone_jid=SUB_JID, name="Priya", fields=["cybersecurity"], state="active"))
+        s.commit()
+        sid = s.exec(select(Subscriber.id)).first()
+    # anonymous: redirected to login
+    assert client.post(f"/admin/subscribers/{sid}/suspend", data={}).status_code == 303
+    # a plain user: 403 on every action, nothing changed
+    _, csrf = login(client, "demo", "demo1234")
+    for action in ("suspend", "reactivate", "remove"):
+        assert client.post(f"/admin/subscribers/{sid}/{action}", data={"csrf": csrf}).status_code == 403
+    assert client.post("/admin/subscribers/preview", data={"csrf": csrf}).status_code == 403
+    with Session(engine) as s:
+        assert s.get(Subscriber, sid).active is True
+    # admin without the CSRF token: 403
+    login(client, "admin", "admin1234")
+    assert client.post(f"/admin/subscribers/{sid}/remove", data={}).status_code == 403
+    assert client.post("/admin/subscribers/preview", data={}).status_code == 403
+    with Session(engine) as s:
+        assert s.get(Subscriber, sid) is not None
