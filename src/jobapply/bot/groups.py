@@ -207,7 +207,7 @@ def handle_group(session: Session, inbound: dict, *, send=send_to, now: datetime
     now = _aware(now) or utcnow()
     text = str(inbound.get("text") or "").strip()
     group_jid = str(inbound.get("chat") or "").strip()
-    if not text.startswith("!") or not group_jid.endswith("@g.us") or inbound.get("fromMe"):
+    if not text.startswith("!") or not group_jid.endswith("@g.us"):
         return []
     parts = text[1:].split()
     if not parts:
@@ -222,6 +222,12 @@ def handle_group(session: Session, inbound: dict, *, send=send_to, now: datetime
         log.info("group command rate limited", group=mask_target(group_jid))
         return []
     sender = str(inbound.get("from") or "")
+    if inbound.get("fromMe"):
+        # The owner drives the bot from the phone the bridge is linked to: those commands arrive as our own
+        # messages, so the sender is the bridge's number (an admin).
+        from jobapply.notify import bridge_me_digits
+
+        sender = (bridge_me_digits() or "") + "@s.whatsapp.net"
     try:
         reply = _answer(session, feed, cmd, args, sender, now)
     except Exception as exc:  # noqa: BLE001 - a bad command must never raise into the webhook

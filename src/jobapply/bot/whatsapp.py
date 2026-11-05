@@ -291,11 +291,13 @@ def handle(session: Session, inbound: dict, *, send=send_to, now: datetime | Non
     text = str(inbound.get("text") or "").strip()
     if not jid or not text or jid == "status@broadcast":
         return []
+    cmd = command_word(text)
+    sub = session.exec(select(Subscriber).where(Subscriber.phone_jid == jid)).first()
+    if sub is None and cmd not in START_WORDS:
+        return []  # ordinary chat with a non-subscriber: not the bot's business, not counted, not logged
     if rate_limited(jid, now):
         log.info("subscriber bot: rate limited", to=mask_target(jid))
         return []
-    cmd = command_word(text)
-    sub = session.exec(select(Subscriber).where(Subscriber.phone_jid == jid)).first()
     if sub is None:
         if cmd not in START_WORDS:
             return []  # a stranger's ordinary text: this is a real phone, leave it alone

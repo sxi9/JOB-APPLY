@@ -358,3 +358,20 @@ def test_group_feed_commands_are_admin_only(session, monkeypatch):
     groups_mod.reset_throttles()
     (reply,) = say(session, "!feed bogus", send, jid=GROUP, group=True, sender=owner)
     assert reply.startswith("Usage: !feed")
+
+
+
+def test_owner_group_commands_arrive_as_from_me_and_count_as_admin(session, monkeypatch):
+    """The owner types in the group from the phone the bridge is linked to: the record is fromMe, and it must be
+    answered (and allowed to edit the feed) instead of being ignored."""
+    send = FakeSend()
+    _feed(session)
+    monkeypatch.setattr("jobapply.notify.bridge_me_digits", lambda: "919000000001")
+    inbound = {"id": "m1", "chat": GROUP, "from": "me", "fromMe": True, "text": "!help", "isGroup": True,
+               "ts": NOW.isoformat()}
+    (reply,) = handle(session, inbound, send=send, now=NOW)
+    assert send.sent == [(GROUP, reply)] and "!jobs" in reply
+    later = NOW + timedelta(minutes=2)
+    inbound = {**inbound, "id": "m2", "text": "!feed status", "ts": later.isoformat()}
+    (reply,) = handle(session, inbound, send=send, now=later)
+    assert "not an admin" not in reply.lower() and "Security jobs" in reply
