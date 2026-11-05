@@ -30,6 +30,7 @@ from jobapply.forms.runner import AnswerSource, FillResult, FormRunner, PlannedF
 from jobapply.logs import get_logger
 from jobapply.models import Application, AppStatus, Job, JobSource, User, UserSite, utcnow
 from jobapply.notify import notify
+from jobapply.pipeline.alerts import notify_only_skip, notify_outcome
 from jobapply.repo import UserScope
 from jobapply.switches import global_dry_run, kill_switch_on
 from jobapply.users import ACCOUNT_SITES
@@ -108,6 +109,8 @@ def applied_today(session: Session, user_id: int, site: str | None = None) -> in
 def pick_applications(session: Session, user: User, limit: int) -> list[tuple[Application, Job, UserSite]]:
     """Approved first, then queued by score. Only sites the user enabled; queued rows on sites without
     auto-submit still get a dry run so the Queue page can show the filled form."""
+    if notify_only_skip(user, "pick_applications"):
+        return []
     scope = UserScope(session, user)
     rows = scope.applications_with_jobs(Application.status.in_(APPLY_STATUSES), limit=500)
     rows.sort(key=lambda r: (r[0].status != AppStatus.approved, -(r[0].score or 0)))
@@ -140,7 +143,23 @@ def record_outcome(
     session: Session, user: User, app: Application, job: Job, result: FillResult | None, error: str | None = None
 ) -> ApplyOutcome:
     """Turn a filler result (or a crash) into the application's status, events and alerts. Shared by the ATS
-    `run_one` path and the LinkedIn Easy Apply path."""
+    `run_one` path and the LinkedIn Easy Apply path. In automatic mode the outcome is also posted to the
+    user's WhatsApp target(s) (`pipeline.alerts.notify_outcome`, never raises); the older `paused` alert to
+    the number is kept for users who get no outcome alert (notify mode, no target)."""
+    outcome = _record_outcome(session, user, app, job, result, error)
+    reason = app.error if outcome.status in (AppStatus.paused, AppStatus.failed) else outcome.detail
+    sent = notify_outcome(session, user, app, job, outcome.status, reason or outcome.detail)
+    if outcome.status == AppStatus.paused and not sent and result is not None and result.paused_reason:
+        try:
+            notify(session, user, "paused", f"{job.title} at {job.company}: {result.paused_reason}")
+        except Exception as exc:  # noqa: BLE001 - a notifier failure must not undo a recorded outcome
+            log.warning("notification failed", user=user.username, error=str(exc)[:200])
+    return outcome
+
+
+def _record_outcome(
+    session: Session, user: User, app: Application, job: Job, result: FillResult | None, error: str | None = None
+) -> ApplyOutcome:
     scope = UserScope(session, user)
     if result is None:
         app.error = (error or "filler failed")[:500]
@@ -169,10 +188,6 @@ def record_outcome(
     if result.paused_reason:
         app.error = "; ".join([result.paused_reason, *result.needs_human[:3], *result.unfilled_required[:3]])[:500]
         scope.set_status(app, AppStatus.paused, detail)
-        try:
-            notify(session, user, "paused", f"{job.title} at {job.company}: {result.paused_reason}")
-        except Exception as exc:  # noqa: BLE001 - a notifier failure must not undo a recorded outcome
-            log.warning("notification failed", user=user.username, error=str(exc)[:200])
         return ApplyOutcome(app.id, AppStatus.paused, detail)
     if result.error:
         app.error = result.error
@@ -334,6 +349,8 @@ def apply_user(
     if kill_switch_on(session):
         log.warning("kill switch on, not applying", user=user.username)
         return []
+    if notify_only_skip(user, "apply_user"):
+        return []
     dry_run = dry_run or global_dry_run(session)
     cap = int((user.preferences or {}).get("daily_cap", 40))
     done_today = applied_today(session, user.id)
@@ -458,6 +475,8 @@ def pick_external_linkedin_applications(
 ) -> list[tuple[Application, Job]]:
     """Approved then queued applications on LinkedIn postings that are NOT Easy Apply and have no resolved
     ATS apply URL yet (ats_type None, still a /jobs/view link)."""
+    if notify_only_skip(user, "pick_external_linkedin_applications"):
+        return []
     scope = UserScope(session, user)
     rows = scope.applications_with_jobs(Application.status.in_(APPLY_STATUSES), limit=500)
     rows.sort(key=lambda r: (r[0].status != AppStatus.approved, -(r[0].score or 0)))
@@ -531,6 +550,8 @@ def apply_external_linkedin_user(
     """
     if kill_switch_on(session):
         log.warning("kill switch on, not resolving linkedin jobs", user=user.username)
+        return []
+    if notify_only_skip(user, "apply_external_linkedin_user"):
         return []
     dry_run = dry_run or global_dry_run(session)
     cap = int((user.preferences or {}).get("daily_cap", 40))
@@ -872,6 +893,8 @@ def apply_assisted_user(
         raise ValueError(f"not an assisted site with a uniform applier: {site!r}")
     if kill_switch_on(session):
         log.warning("kill switch on, not applying", user=user.username, site=site)
+        return []
+    if notify_only_skip(user, f"apply_assisted_user:{site}"):
         return []
     dry_run = dry_run or global_dry_run(session)
     scope = UserScope(session, user)

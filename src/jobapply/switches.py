@@ -39,3 +39,21 @@ def referral_send_enabled(session: Session) -> bool:
     so sending is enabled only when one of them is explicitly turned on. This gates `send_referral`; it
     never affects drafting, which is always allowed and contacts no one."""
     return bool(get_settings().referral_send) or get_value(session, "referral_send") == "on"
+
+
+SHARED_GROUPS_KEY = "shared_group_jids"
+
+
+def shared_group_jids(session: Session) -> list[str]:
+    """The WhatsApp groups an admin shares with every user (`shared_group_jids` app setting, comma-separated
+    jids, set on the admin page): a plain user may route their alerts into one of these only. The bridge is the
+    owner's own phone, so its full group list is never shown to a plain user. [] until an admin shares one."""
+    raw = get_value(session, SHARED_GROUPS_KEY) or ""
+    return list(dict.fromkeys(p.strip() for p in raw.split(",") if p.strip()))
+
+
+def set_shared_group_jids(session: Session, jids) -> list[str]:
+    """Store the shared groups (not committed); blanks and duplicates dropped. Returns what was stored."""
+    clean = list(dict.fromkeys(str(j).strip() for j in jids if str(j or "").strip()))
+    set_value(session, SHARED_GROUPS_KEY, ",".join(clean))
+    return clean

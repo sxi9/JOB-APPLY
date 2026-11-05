@@ -16,9 +16,12 @@ from jobapply.mail.mailbox import (
     test_mailbox,
 )
 from jobapply.models import Credential, UserSite, utcnow
+from jobapply.notify import ALERT_TARGETS, alert_targets, bridge_health, list_groups, mask_target, send_to
+from jobapply.pipeline.alerts import APPLY_MODES, apply_mode, fmt_ist
 from jobapply.pipeline.filters import SENIORITY_ORDER, UserFilters
 from jobapply.roles import all_fields
 from jobapply.sites import connect
+from jobapply.switches import shared_group_jids
 from jobapply.users import SITES as SITE_DEFAULTS
 from jobapply.vault import Vault, VaultError, mask
 from jobapply.web.deps import Ctx, as_list, flash, get_ctx, read_form, split_lines
@@ -29,6 +32,63 @@ router = APIRouter()
 ALERT_TYPES = ["interview", "assessment", "paused", "failed", "daily_summary"]
 TONES = ["professional", "warm", "concise", "enthusiastic"]
 CREDENTIAL_KINDS = ["login", "imap", "smtp", "api_key"]
+APPLY_MODE_HELP = {
+    "notify": "Notify-only: new matches are scored and posted to WhatsApp; nothing is ever filled or submitted.",
+    "auto": "Automatic: the apply worker fills and submits within your sites, caps and the global switches, "
+            "and posts each outcome.",
+}
+ALERT_TARGET_LABELS = {"number": "my number", "group": "group", "both": "both"}
+
+
+def allowed_groups(ctx: Ctx) -> list[dict]:
+    """The groups the viewed user's alerts may go to, `[{"jid", "name"}]`: every group the bridge account is in
+    for an admin (the bridge is the owner's own phone, so the full list is theirs), for a plain user only the
+    ones an admin shared (`switches.shared_group_jids`) plus the group already saved for them (an admin may
+    have picked it while viewing as them), so a save never loses it. Never raises when the bridge is down."""
+    try:
+        groups = list_groups()
+    except Exception:  # noqa: BLE001
+        groups = []
+    if ctx.is_admin:
+        return groups
+    names = {g["jid"]: g["name"] for g in groups}
+    saved = str((ctx.view.preferences or {}).get("whatsapp_group_jid") or "")
+    jids = shared_group_jids(ctx.session)
+    if saved and saved not in jids:
+        jids.append(saved)
+    return [{"jid": j, "name": names.get(j) or mask_target(j)} for j in jids]
+
+
+def group_allowed(ctx: Ctx, jid: str) -> bool:
+    """May the viewed user's alerts be routed into `jid`? Always for none, an admin, or the group already
+    saved for them; otherwise only a group an admin shared."""
+    saved = str((ctx.view.preferences or {}).get("whatsapp_group_jid") or "")
+    return not jid or ctx.is_admin or jid == saved or jid in shared_group_jids(ctx.session)
+
+
+def notifications_context(ctx: Ctx) -> dict:
+    """Template variables for the Notifications card: the bridge status, the groups the viewed user may pick
+    (`allowed_groups`) and their mode / targets. Never raises when the bridge is down."""
+    prefs = ctx.view.preferences or {}
+    try:
+        bridge = bridge_health()
+    except Exception as exc:  # noqa: BLE001
+        bridge = {"ok": False, "status": "error", "me_masked": "", "error": str(exc)[:200]}
+    groups = allowed_groups(ctx)
+    saved_jid = str(prefs.get("whatsapp_group_jid") or "")
+    return {
+        "bridge": bridge,
+        "groups": groups,
+        "group_editable": ctx.is_admin or bool(groups),
+        "saved_group_masked": mask_target(saved_jid),
+        "saved_group_known": any(g["jid"] == saved_jid for g in groups),
+        "apply_modes": APPLY_MODES,
+        "apply_mode_help": APPLY_MODE_HELP,
+        "current_mode": apply_mode(ctx.view),
+        "alert_targets": ALERT_TARGETS,
+        "alert_target_labels": ALERT_TARGET_LABELS,
+        "targets_set": bool(alert_targets(ctx.view)),
+    }
 
 
 def site_kind(site: str) -> str:
@@ -177,6 +237,7 @@ def settings_page(ctx: Ctx = Depends(get_ctx)):
         providers=providers,
         live=get_settings().llm_backend != "fake",
         **mailbox_context(ctx),
+        **notifications_context(ctx),
     )
 
 
@@ -339,6 +400,21 @@ async def save_preferences(request: Request, ctx: Ctx = Depends(get_ctx)):
         prefs["whatsapp_number"] = str(form["whatsapp_number"]).strip()
         prefs["forward_email"] = str(form.get("forward_email") or "").strip()
         prefs["alert_types"] = as_list(form.get("alert_types"))
+        mode = str(form.get("apply_mode") or prefs.get("apply_mode") or "notify")
+        prefs["apply_mode"] = mode if mode in APPLY_MODES else "notify"
+        target = str(form.get("alerts_target") or prefs.get("alerts_target") or "number")
+        prefs["alerts_target"] = target if target in ALERT_TARGETS else "number"
+        if ctx.is_admin or "whatsapp_group_jid" in form:  # absent for a user without a shared group: kept as is
+            wanted = str(form.get("whatsapp_group_jid") or "").strip()
+            if group_allowed(ctx, wanted):
+                prefs["whatsapp_group_jid"] = wanted
+            else:  # a plain user may pick a group an admin shared (or keep the one saved for them) only
+                flash(request, "That WhatsApp group is not shared with you, so the saved group was kept.", "error")
+        prefs["new_jobs_enabled"] = bool(form.get("new_jobs_enabled"))
+        try:
+            prefs["new_jobs_min_score"] = max(0, min(100, int(form.get("new_jobs_min_score") or 0)))
+        except (TypeError, ValueError):
+            prefs["new_jobs_min_score"] = 0
     if "provider_order" in form:
         enabled = [n for n in CATALOG if form.get(f"use__{n}")]
         order = [n for n in parse_order(form.get("provider_order")) if n in enabled]
@@ -367,3 +443,24 @@ async def save_preferences(request: Request, ctx: Ctx = Depends(get_ctx)):
     ctx.session.commit()
     flash(request, "Saved")
     return RedirectResponse(f"/settings#{form.get('section', 'ai')}", status_code=303)
+
+
+@router.post("/settings/notifications/test")
+async def settings_notifications_test(request: Request, ctx: Ctx = Depends(get_ctx)):
+    """Send ONE short test message to the viewed user's chosen WhatsApp target(s) (saved preferences) and flash
+    the result. CSRF-checked; an admin "viewing as" another user tests that user's targets."""
+    await read_form(request)
+    targets = alert_targets(ctx.view)
+    if not targets:
+        flash(request, "No WhatsApp target yet: save a number (or pick a group and 'Send to: group') first.", "error")
+        return RedirectResponse("/settings#notifications", status_code=303)
+    text = (f"\u2705 JOB-APPLY test for {ctx.view.username} \u2014 {fmt_ist(utcnow())}. "
+            f"Mode: {apply_mode(ctx.view)}. Alerts will arrive here.")
+    ok = [t for t in targets if send_to(t, text)]
+    if ok:
+        flash(request, f"Test message sent to {len(ok)} of {len(targets)} target(s).",
+              "ok" if len(ok) == len(targets) else "error")
+    else:
+        flash(request, "Test message failed: the WhatsApp bridge did not accept it (check the bridge status chip).",
+              "error")
+    return RedirectResponse("/settings#notifications", status_code=303)

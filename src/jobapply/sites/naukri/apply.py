@@ -834,10 +834,14 @@ def refresh_profile(user_id: int, dry_run: bool = True, session_db: Any = None, 
 
 
 def pick_naukri_applications(db: Any, user: User, limit: int) -> list[tuple[Application, Job]]:
-    """Approved then queued applications whose job routes to Naukri (``site_for_job(job) == "naukri"``)."""
+    """Approved then queued applications whose job routes to Naukri (``site_for_job(job) == "naukri"``).
+    Empty for a user in notify-only mode (`pipeline.alerts.notify_only_skip`)."""
+    from jobapply.pipeline.alerts import notify_only_skip
     from jobapply.pipeline.apply import APPLY_STATUSES, site_for_job
     from jobapply.repo import UserScope
 
+    if notify_only_skip(user, "pick_naukri_applications"):
+        return []
     scope = UserScope(db, user)
     rows = scope.applications_with_jobs(Application.status.in_(APPLY_STATUSES), limit=500)
     rows.sort(key=lambda r: (r[0].status != AppStatus.approved, -(r[0].score or 0)))
@@ -893,12 +897,15 @@ def apply_naukri_user(pw: Any, db: Any, user: User, llm: Any = None, limit: int 
     ``auto_submit`` flag (off -> the run stops before the Apply click and screenshots). A challenge or logout
     seen mid-run ends the run for the user and is never retried here.
     """
+    from jobapply.pipeline.alerts import notify_only_skip
     from jobapply.pipeline.apply import applied_today, record_outcome
     from jobapply.repo import UserScope
     from jobapply.switches import global_dry_run, kill_switch_on
 
     if kill_switch_on(db):
         log.warning("kill switch on, not applying on naukri", user=user.username)
+        return []
+    if notify_only_skip(user, "apply_naukri_user"):
         return []
     dry_run = dry_run or global_dry_run(db)
     scope = UserScope(db, user)

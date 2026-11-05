@@ -22,12 +22,14 @@ Username and password. Roles: admin (sees all users) and user (own data only).
 ## Jobs
 - Filters: posted in last N hours, source, score, location, remote, salary, company.
 - Row: title, company, location, posted time, source badge, AI match score, status chip.
+- `/jobs/<id>` is the link every WhatsApp alert carries (`JOBAPPLY_PUBLIC_URL`, default `http://192.168.29.22:8010`).
 - Detail: description, AI reason and missing skills, chosen resume variant, buttons Apply now / Queue / Skip / Blocklist company.
 
 ## Queue / Review
 - Jobs waiting for approval (auto-submit off, or low confidence).
 - Filled answers next to form fields before submit, editable cover letter. Approve / Edit / Reject.
 - A paused application whose reason starts with "mailbox not configured" (Workday account creation, apply by email) shows a "Set up your Mailbox in Settings" link to `/settings#mailbox`.
+- A user in notify-only mode (`preferences.apply_mode` unset or `notify`, see docs/NOTIFICATIONS.md) sees the banner *Notify-only mode: nothing is applied for you; switch to automatic in Settings* above the rows; the rows are still listed so what would be applied to stays visible.
 
 ## Applications
 - Status timeline, submission screenshot, answers sent, follow-up date, reply thread.
@@ -49,10 +51,11 @@ Username and password. Roles: admin (sees all users) and user (own data only).
 - **Mailbox** (`#mailbox`, above Credentials; `web/routes/settings.py` + `mail/mailbox.py`): provider preset (Gmail `imap.gmail.com:993` / `smtp.gmail.com:587`, Outlook, Yahoo, custom hosts under *Advanced*), address and app password (masked, never echoed; blank keeps the saved one). `POST /settings/mailbox` saves vault site `mailbox` kinds `imap` **and** `smtp`; `POST /settings/mailbox/test` (or the "Save and test" button) logs in over IMAP, reads only the newest message's subject (BODY.PEEK, nothing marked), logs in over SMTP without sending, and stores `last_test_at` / `status` / `error` / `newest_subject` in `users.profile["mailbox"]`; the status chip shows `ok` / `untested` / `imap_failed` / `smtp_failed` / `missing`. `POST /settings/mailbox/delete` removes both rows. Links to `docs/MAILBOX.md` (Gmail 2-Step Verification → App passwords). CLI: `jobapply mail test -u <user>`, `jobapply mail wait-code -u <user> --sender workday --timeout 120`.
 - Credentials: site logins and mailbox IMAP/SMTP, encrypted at rest, masked in UI.
 - AI: API key, scoring threshold, cover letter tone.
-- Notifications: WhatsApp number, alert types.
+- **Notifications** (`#notifications`; docs/NOTIFICATIONS.md): bridge status chip (`notify.bridge_health`, number masked to its last 4 digits), **Mode** radio `notify` (default: matches are scored and posted, nothing is ever filled or submitted; every apply picker and run function returns empty for the user) / `auto` (the historical behaviour with every gate, plus an outcome alert per application), WhatsApp number, **WhatsApp group** select from the bridge's `GET /groups` (`notify.list_groups`, cached 10 minutes; the saved jid stays selected when the bridge is down), **Send to** number / group / both, forward-to email, **New job alerts** on/off + **Minimum score**, alert types. Saved by `POST /settings/preferences` (`section=notifications`) into `users.preferences` (`apply_mode`, `alerts_target`, `whatsapp_group_jid`, `new_jobs_enabled`, `new_jobs_min_score`). **Send test** (`POST /settings/notifications/test`, CSRF, per viewed user) sends one short message to the saved target(s) and flashes the result. CLI: `jobapply alerts send-new -u <user> [--dry-run]`, `jobapply alerts groups`, `jobapply alerts test -u <user>`.
 
 ## Admin
 - Users, add user, per-user usage and caps, collector schedule, logs, global kill switch.
+- **Group feeds** card (`web/routes/admin.py`, `pipeline/feeds.py`, docs/NOTIFICATIONS.md "Group feeds"): admin-configured WhatsApp group feeds, stored in `app_settings["group_feeds"]`. Table of feeds (name, group, filter summary, enabled, last run, posted count) with Edit / Run now (dry run, shows the messages on the page) / Post now / Enable / Disable / Remove; add-edit form with the same career-field picker as Settings (`_role_picker.html`), include / exclude keywords, locations, sources, posted-within hours, max per run, minimum salary, remote only. Every POST is CSRF-checked and admin only (`admin_ctx`, 403 for users). Posted jobs are recorded in `feed_posts` so a job never reaches a group twice.
 
 ## Referrals
 - Review page for referral drafts (`/referrals`, `web/routes/referrals.py` + `referrals.html`), per-user scoped through `ctx.scope` (admin "View as" respected), CSRF on every POST.

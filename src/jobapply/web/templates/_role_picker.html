@@ -1,0 +1,22 @@
+{# Career-field picker. Expects `role_fields` (roles.all_fields()) and `role_selected` (set of "field:*" /
+   "field:sub" / "field" keys); the checkbox name is `role_selection`. Same markup as Settings -> Filters. #}
+<style>
+  .role-taxonomy { display: grid; gap: 6px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .role-field { border: 1px solid var(--border, #333); border-radius: 6px; padding: 6px 10px; }
+  .role-field > summary { cursor: pointer; font-weight: 600; }
+  .role-subroles { margin: 6px 0 2px 14px; display: flex; flex-direction: column; gap: 2px; }
+</style>
+<div class="role-taxonomy">
+  {% for fld in role_fields %}
+  {% set ns = namespace(open=((fld.key in role_selected) or ((fld.key ~ ':*') in role_selected))) %}
+  {% for sr in fld.subroles %}{% if (fld.key ~ ':' ~ sr.key) in role_selected %}{% set ns.open = true %}{% endif %}{% endfor %}
+  <details class="role-field"{{ ' open' if ns.open }}>
+    <summary>{{ fld.label }}</summary>
+    <label class="check"><input type="checkbox" name="role_selection" value="{{ fld.key }}:*" {{ 'checked' if (fld.key ~ ':*') in role_selected or fld.key in role_selected }}> <strong>Any {{ fld.label }} role</strong></label>
+    <div class="role-subroles">
+      {% for sr in fld.subroles %}<label class="check"><input type="checkbox" name="role_selection" value="{{ fld.key }}:{{ sr.key }}" {{ 'checked' if (fld.key ~ ':' ~ sr.key) in role_selected }}> {{ sr.label }}</label>{% endfor %}
+    </div>
+  </details>
+  {% endfor %}
+</div>
+

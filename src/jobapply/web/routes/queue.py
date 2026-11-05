@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from jobapply.models import Application, AppStatus, utcnow
+from jobapply.pipeline.alerts import notify_only
 from jobapply.web.deps import Ctx, flash, get_ctx, read_form
 
 router = APIRouter()
@@ -15,7 +16,7 @@ REVIEW_STATUSES = (AppStatus.queued, AppStatus.dry_run, AppStatus.paused)
 def queue_page(ctx: Ctx = Depends(get_ctx)):
     rows = ctx.scope.applications_with_jobs(Application.status.in_(REVIEW_STATUSES))
     rows.sort(key=lambda r: (r[0].status != AppStatus.paused, -(r[0].score or 0)))
-    return ctx.render("queue.html", rows=rows)
+    return ctx.render("queue.html", rows=rows, notify_only=notify_only(ctx.view))
 
 
 @router.post("/queue/{app_id}")

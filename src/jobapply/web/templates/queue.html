@@ -2,6 +2,7 @@
 {% block title %}Queue · JOB-APPLY{% endblock %}
 {% block content %}
 <h1>Review queue</h1>
+{% if notify_only %}<div class="flash flash-ok" id="notify-only-banner"><strong>Notify-only mode:</strong> nothing is applied for you; switch to automatic in <a href="/settings#notifications">Settings</a>. New matches are still scored and posted to WhatsApp.</div>{% endif %}
 <p class="muted small">Jobs waiting for approval: auto-submit is off for the site, the score is below your threshold, a dry run is ready for review, or a run paused on a CAPTCHA or low confidence.</p>
 {% for app, job in rows %}
 <section class="card" id="q-{{ app.id }}" style="margin-bottom:16px">

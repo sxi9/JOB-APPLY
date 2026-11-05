@@ -713,10 +713,14 @@ def apply_job(session, application: Application, *, dry_run: bool, auto_submit: 
 
 
 def pick_cutshort_applications(session: Session, user: User, limit: int) -> list[tuple[Application, Job]]:
-    """Approved then queued applications on Cutshort postings (ats_type / source `cutshort`)."""
+    """Approved then queued applications on Cutshort postings (ats_type / source `cutshort`). Empty for a
+    user in notify-only mode (`pipeline.alerts.notify_only_skip`)."""
+    from jobapply.pipeline.alerts import notify_only_skip
     from jobapply.pipeline.apply import APPLY_STATUSES, site_for_job
     from jobapply.repo import UserScope
 
+    if notify_only_skip(user, "pick_cutshort_applications"):
+        return []
     scope = UserScope(session, user)
     rows = scope.applications_with_jobs(Application.status.in_(APPLY_STATUSES), limit=500)
     rows.sort(key=lambda r: (r[0].status != AppStatus.approved, -(r[0].score or 0)))
@@ -758,12 +762,15 @@ def apply_cutshort_user(pw, session: Session, user: User, llm=None, limit: int =
     Honours the kill switch, the global dry-run switch, the per-user and per-site daily caps, the site's
     enabled / auto-submit flags and the challenge cooldown; a challenge or logout seen mid-run ends the run.
     """
+    from jobapply.pipeline.alerts import notify_only_skip
     from jobapply.pipeline.apply import applied_today, record_outcome
     from jobapply.repo import UserScope
     from jobapply.switches import global_dry_run, kill_switch_on
 
     if kill_switch_on(session):
         log.warning("kill switch on, not applying on cutshort", user=user.username)
+        return []
+    if notify_only_skip(user, "apply_cutshort_user"):
         return []
     dry_run = dry_run or global_dry_run(session)
     scope = UserScope(session, user)

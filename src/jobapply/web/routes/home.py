@@ -7,6 +7,7 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from jobapply.models import Application, ApplicationEvent, AppStatus, CollectorRun, Job, MailMessage, utcnow
+from jobapply.pipeline.alerts import NOTIFIED_KIND
 from jobapply.web.deps import Ctx, get_ctx
 
 router = APIRouter()
@@ -53,7 +54,7 @@ def home(ctx: Ctx = Depends(get_ctx)):
         select(ApplicationEvent, Application, Job)
         .join(Application, Application.id == ApplicationEvent.application_id)
         .join(Job, Job.id == Application.job_id)
-        .where(ApplicationEvent.user_id == uid)
+        .where(ApplicationEvent.user_id == uid, ApplicationEvent.kind != NOTIFIED_KIND)  # one per alerted job
         .order_by(ApplicationEvent.created_at.desc()).limit(15)
     ).all()
     cap = int((ctx.view.preferences or {}).get("daily_cap", 40))

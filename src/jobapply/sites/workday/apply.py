@@ -344,10 +344,13 @@ def apply_job(session: WorkdaySession, application: Application, *, dry_run: boo
 
 def pick_workday_applications(db: Any, user: User, limit: int) -> list[tuple[Application, Job]]:
     """Approved then queued applications on Workday postings (``ats_type == "workday"`` or a bare
-    ``*.myworkdayjobs.com`` apply URL)."""
+    ``*.myworkdayjobs.com`` apply URL). Empty for a user in notify-only mode."""
+    from jobapply.pipeline.alerts import notify_only_skip
     from jobapply.pipeline.apply import APPLY_STATUSES, site_for_job
     from jobapply.repo import UserScope
 
+    if notify_only_skip(user, "pick_workday_applications"):
+        return []
     scope = UserScope(db, user)
     rows = scope.applications_with_jobs(Application.status.in_(APPLY_STATUSES), limit=500)
     rows.sort(key=lambda r: (r[0].status != AppStatus.approved, -(r[0].score or 0)))
@@ -385,17 +388,21 @@ def apply_workday_user(pw: Any, db: Any, user: User, llm: Any = None, limit: int
                        vault: Vault | None = None) -> list[Any]:
     """One user's Workday run inside their persistent (headless) profile. Returns ``ApplyOutcome`` rows.
 
-    Gates, in order: kill switch; global dry-run switch (forces dry run: no account creation, no Submit);
-    site enabled; cooldown after a challenge; per-user and per-site daily caps; the site's ``auto_submit``
-    flag. A challenge mid-run records the cooldown and stops; a per-user problem (mailbox / vault missing,
+    Gates, in order: kill switch; notify-only mode (`pipeline.alerts.notify_only_skip`: nothing is applied,
+    no browser opened); global dry-run switch (forces dry run: no account creation, no Submit); site
+    enabled; cooldown after a challenge; per-user and per-site daily caps; the site's ``auto_submit`` flag.
+    A challenge mid-run records the cooldown and stops; a per-user problem (mailbox / vault missing,
     ``stop_run``) stops after the first application instead of failing every one the same way.
     """
+    from jobapply.pipeline.alerts import notify_only_skip
     from jobapply.pipeline.apply import applied_today, record_outcome
     from jobapply.repo import UserScope
     from jobapply.switches import global_dry_run, kill_switch_on
 
     if kill_switch_on(db):
         log.warning("kill switch on, not applying on workday", user=user.username)
+        return []
+    if notify_only_skip(user, "apply_workday_user"):  # before the picker and the profile launch
         return []
     dry_run = dry_run or global_dry_run(db)
     scope = UserScope(db, user)

@@ -1,7 +1,9 @@
-"""Run collectors, store their jobs and hand new jobs to each user's filters."""
+"""Run collectors, store their jobs, hand new jobs to each user's filters, then post the WhatsApp alerts
+and group feeds."""
 
 from __future__ import annotations
 
+import threading
 from datetime import timedelta
 
 from sqlalchemy.engine import Engine
@@ -13,7 +15,9 @@ from jobapply.config import get_settings
 from jobapply.db import session_scope
 from jobapply.logs import get_logger
 from jobapply.models import CollectorRun, Job, User, utcnow
+from jobapply.pipeline.alerts import notify_new_jobs_all
 from jobapply.pipeline.dedupe import store_jobs
+from jobapply.pipeline.feeds import run_feeds
 from jobapply.pipeline.filters import assign_jobs
 from jobapply.roles import all_fields, match_title, search_queries
 from jobapply.switches import get_value, set_value
@@ -98,6 +102,9 @@ def broad_queries(searches: SearchConfig | None = None, engine: Engine | None = 
     return picked
 
 
+_NOTIFY_LOCK = threading.Lock()  # one alert / feed phase at a time per process (collect + collect_hot)
+
+
 def run_all(only: list[str] | None = None, collectors: list[BaseCollector] | None = None,
             engine: Engine | None = None) -> dict:
     extra: list[str] = []
@@ -125,9 +132,27 @@ def run_all(only: list[str] | None = None, collectors: list[BaseCollector] | Non
         new_ids += run_collector(c, engine)
     with session_scope(engine) as session:
         assigned = assign_jobs(session, new_ids)
-    log.info("collect done", collectors=len(collectors), queries=queries_ran, new_jobs=len(new_ids))
+        # The scheduler runs `collect` and `collect_hot` as two jobs of one process (max_instances is per
+        # job), so without this lock both could be posting the same jobs at once.
+        with _NOTIFY_LOCK:
+            # WhatsApp new-job alerts for every active user (pipeline.alerts). Best effort: a notifier or
+            # bridge problem is logged and never breaks the collect run.
+            try:
+                alerts = notify_new_jobs_all(session)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("new job alerts failed", error=f"{type(exc).__name__}: {exc}"[:300])
+                alerts = {}
+            # Admin-configured WhatsApp group feeds (pipeline.feeds): the new jobs that pass a feed's filters
+            # go to its group. Same rule: best effort, logged, never a failed collect.
+            try:
+                feeds = {r["name"]: r["posted"] for r in run_feeds(session, new_ids)["feeds"]}
+            except Exception as exc:  # noqa: BLE001
+                log.warning("group feeds failed", error=f"{type(exc).__name__}: {exc}"[:300])
+                feeds = {}
+    log.info("collect done", collectors=len(collectors), queries=queries_ran, new_jobs=len(new_ids),
+             alerts=sum(alerts.values()), feed_posts=sum(feeds.values()))
     return {"collectors": len(collectors), "queries": queries_ran, "new_jobs": len(new_ids),
-            "assigned": assigned}
+            "assigned": assigned, "alerts": alerts, "feeds": feeds}
 
 
 def coverage_stats(session) -> dict:

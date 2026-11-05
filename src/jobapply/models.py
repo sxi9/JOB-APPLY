@@ -1,6 +1,6 @@
 """Database models.
 
-Shared tables: jobs, job_sources, form_profiles, collector_runs, app_settings.
+Shared tables: jobs, job_sources, form_profiles, collector_runs, app_settings, feed_posts.
 Per-user tables (always queried with user_id): users, user_sites, applications,
 application_events, answers_bank, credentials, mail_messages, llm_usage.
 """
@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, Column, Text, UniqueConstraint
+from sqlalchemy import JSON, Column, Index, Text, UniqueConstraint, text
 from sqlmodel import Field, SQLModel
 
 
@@ -193,6 +193,13 @@ class Application(SQLModel, table=True):
 
 class ApplicationEvent(SQLModel, table=True):
     __tablename__ = "application_events"
+    # One `notified` row per application and target kind (detail `whatsapp:number` / `whatsapp:group`): the
+    # new-job alert claims a batch with these rows BEFORE the send, so two overlapping runs (collect and
+    # collect_hot, a CLI run) can never post the same job twice (pipeline.alerts). Migration 0006.
+    __table_args__ = (
+        Index("ux_application_events_notified", "application_id", "detail", unique=True,
+              sqlite_where=text("kind = 'notified'"), postgresql_where=text("kind = 'notified'")),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     application_id: int = Field(foreign_key="applications.id", index=True)
@@ -274,6 +281,19 @@ class AppSetting(SQLModel, table=True):
 
     key: str = Field(primary_key=True)
     value: str = ""
+
+
+class FeedPost(SQLModel, table=True):
+    """A job a WhatsApp group feed (pipeline.feeds, feeds live in app_settings["group_feeds"]) has posted.
+    Written only after a successful send; one row per feed and job, so a job never reaches a group twice."""
+
+    __tablename__ = "feed_posts"
+    __table_args__ = (UniqueConstraint("feed_id", "job_id"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    feed_id: str = Field(index=True)
+    job_id: int = Field(foreign_key="jobs.id", index=True)
+    posted_at: datetime = Field(default_factory=utcnow)
 
 
 # ---------------------------------------------------------------- referral outreach (per user)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import typer
 
+from jobapply.cli_alerts import alerts_app
+from jobapply.cli_feeds import feeds_app
 from jobapply.cli_linkedin import linkedin_app
 from jobapply.cli_mail import mail_app
 from jobapply.cli_sites import naukri_app, sites_app
@@ -17,6 +19,8 @@ app.add_typer(linkedin_app, name="linkedin")
 app.add_typer(sites_app, name="sites")
 app.add_typer(naukri_app, name="naukri")
 app.add_typer(mail_app, name="mail")
+app.add_typer(alerts_app, name="alerts")
+app.add_typer(feeds_app, name="feeds")
 log = get_logger("jobapply.cli")
 
 

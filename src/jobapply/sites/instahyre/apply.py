@@ -423,10 +423,14 @@ def apply_job(
 
 
 def pick_instahyre_applications(session: Session, user: User, limit: int) -> list[tuple[Application, Job]]:
-    """Approved then queued applications on Instahyre opportunity pages."""
+    """Approved then queued applications on Instahyre opportunity pages. Empty for a user in notify-only mode
+    (`pipeline.alerts.notify_only_skip`)."""
+    from jobapply.pipeline.alerts import notify_only_skip
     from jobapply.pipeline.apply import APPLY_STATUSES, site_for_job
     from jobapply.repo import UserScope
 
+    if notify_only_skip(user, "pick_instahyre_applications"):
+        return []
     scope = UserScope(session, user)
     rows = scope.applications_with_jobs(Application.status.in_(APPLY_STATUSES), limit=500)
     rows.sort(key=lambda r: (r[0].status != AppStatus.approved, -(r[0].score or 0)))
@@ -468,12 +472,15 @@ def apply_instahyre_user(pw: Any, session: Session, user: User, limit: int = 3, 
     Honours the kill switch, the global dry-run switch, the site flags, the cooldown and the daily caps; a
     challenge or a logout seen mid-run ends the run for the user.
     """
+    from jobapply.pipeline.alerts import notify_only_skip
     from jobapply.pipeline.apply import record_outcome
     from jobapply.repo import UserScope
     from jobapply.switches import global_dry_run, kill_switch_on
 
     if kill_switch_on(session):
         log.warning("kill switch on, not applying on instahyre", user=user.username)
+        return []
+    if notify_only_skip(user, "apply_instahyre_user"):
         return []
     dry_run = dry_run or global_dry_run(session)
     scope = UserScope(session, user)

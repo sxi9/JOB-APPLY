@@ -53,7 +53,8 @@ def page(browser):
 def demo(session, tmp_path, monkeypatch):
     monkeypatch.setenv("JOBAPPLY_DATA_DIR", str(tmp_path / "data"))
     get_settings.cache_clear()
-    user = create_user(session, "demo", "demo1234", profile=DEMO_PROFILE, preferences={"daily_cap": 20})
+    user = create_user(session, "demo", "demo1234", profile=DEMO_PROFILE,
+                       preferences={"daily_cap": 20, "apply_mode": "auto"})
     session.commit()
     yield user
     get_settings.cache_clear()

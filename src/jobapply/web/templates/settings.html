@@ -210,12 +210,43 @@
 <form method="post" action="/settings/preferences" class="card" id="notifications" style="margin-top:16px">
   <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="section" value="notifications">
   <h2>Notifications</h2>
+  <p>WhatsApp bridge: <span class="chip chip-{{ 'green' if bridge.ok else 'red' }}" id="bridge-status">{{ 'open' if bridge.ok else bridge.status }}</span>
+    {% if bridge.me_masked %}<span class="mono small">{{ bridge.me_masked }}</span>{% endif %}
+    {% if not bridge.ok %}<span class="muted small">&middot; alerts are only logged until the bridge is reachable</span>{% endif %}</p>
+  <div class="field"><label>Mode</label>
+    {% for m in apply_modes %}<label class="check"><input type="radio" name="apply_mode" value="{{ m }}" {{ 'checked' if current_mode == m }}> <strong>{{ 'notify-only' if m == 'notify' else 'automatic' }}</strong> <span class="muted small">&mdash; {{ apply_mode_help[m] }}</span></label>{% endfor %}
+  </div>
   <div class="fields">
     <div class="field"><label>WhatsApp number (with country code)</label><input type="tel" name="whatsapp_number" value="{{ prefs.get('whatsapp_number', '') }}"></div>
+    {% set saved_jid = prefs.get('whatsapp_group_jid', '') %}
+    {% if group_editable %}
+    <div class="field"><label>WhatsApp group</label><select name="whatsapp_group_jid" id="whatsapp-group">
+      <option value="">none</option>
+      {% if saved_jid and not saved_group_known %}<option value="{{ saved_jid }}" selected>{{ saved_jid }} (saved)</option>{% endif %}
+      {% for g in groups %}<option value="{{ g.jid }}" {{ 'selected' if g.jid == saved_jid }}>{{ g.name }}</option>{% endfor %}
+    </select>
+      {% if not groups %}<div class="muted small" id="groups-hint">{{ 'The bridge is unreachable, so the group list is empty; a saved group stays selected.' if not bridge.ok else 'The bridge account is in no group yet.' }}</div>{% endif %}</div>
+    {% else %}
+    <div class="field"><label>WhatsApp group</label><div id="whatsapp-group-readonly">{% if saved_jid %}<span class="mono small">{{ saved_group_masked }}</span>{% else %}<span class="muted">none</span>{% endif %}</div>
+      <div class="muted small">No group is shared with you yet: an admin shares the bridge's groups from the Admin page.</div></div>
+    {% endif %}
+    <div class="field"><label>Send to</label>
+      {% for t in alert_targets %}{% if t == 'number' or group_editable or saved_jid %}<label class="check"><input type="radio" name="alerts_target" value="{{ t }}" {{ 'checked' if prefs.get('alerts_target', 'number') == t }}> {{ alert_target_labels[t] }}</label>{% endif %}{% endfor %}</div>
     <div class="field"><label>Forward interview invites to email</label><input type="email" name="forward_email" value="{{ prefs.get('forward_email', '') }}"></div>
+  </div>
+  <div class="fields">
+    <div class="field"><label class="check"><input type="checkbox" name="new_jobs_enabled" value="1" {{ 'checked' if prefs.get('new_jobs_enabled') }}> New job alerts</label>
+      <div class="muted small">After every collect run, the matches not posted yet go out in batches of 8 (newest first), each with the apply link and the dashboard link. A job is never posted twice.</div></div>
+    <div class="field"><label>Minimum score for new job alerts (0 = every match, also unscored ones)</label><input type="number" name="new_jobs_min_score" min="0" max="100" value="{{ prefs.get('new_jobs_min_score', 0) }}"></div>
   </div>
   <div class="field"><label>Alert types</label>
     {% for a in alert_types %}<label class="check"><input type="checkbox" name="alert_types" value="{{ a }}" {{ 'checked' if a in prefs.get('alert_types', alert_types) }}> {{ a | label }}</label>{% endfor %}</div>
+  <p class="muted small">In automatic mode every outcome (applied, queued for approval, paused, failed) is posted to the target above as well.</p>
   <button class="btn btn-primary">Save notifications</button>
+</form>
+<form method="post" action="/settings/notifications/test" class="row" style="margin-top:8px" id="notifications-test">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button class="btn" {{ 'disabled' if not targets_set }}>Send test</button>
+  <span class="muted small">Sends one short message to the saved target(s). Save the card first.</span>
 </form>
 {% endblock %}

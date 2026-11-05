@@ -50,6 +50,91 @@
   </table></div>
 </section>
 
+<form method="post" action="/admin/shared-groups" class="card" style="margin-top:16px" id="shared-groups">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <h2>Shared WhatsApp groups <span class="badge">{{ shared_groups | length }}</span></h2>
+  <p class="muted small">The bridge is your own WhatsApp account, so its group list stays private: a user can route their alerts (Settings &rarr; Notifications, <em>Send to: group</em>) only into a group shared here. Admins can pick any group.</p>
+  <div class="fields">
+    <div class="field"><label>Groups shared with every user (Ctrl / Cmd-click for several)</label>
+      <select name="shared_group_jids" multiple size="6">
+        {% for j in shared_groups if j not in group_names %}<option value="{{ j }}" selected>{{ j }} (not in the bridge's list)</option>{% endfor %}
+        {% for g in groups %}<option value="{{ g.jid }}" {{ 'selected' if g.jid in shared_groups }}>{{ g.name }} · {{ g.jid }}</option>{% endfor %}
+      </select></div>
+    <div class="field"><label>More jids (comma separated; for when the bridge list is empty)</label>
+      <input type="text" name="shared_group_jids_text" placeholder="120363...@g.us, 120363...@g.us"></div>
+  </div>
+  <button class="btn btn-primary">Save shared groups</button>
+</form>
+
+<section class="card" style="margin-top:16px" id="feeds">
+  <h2>Group feeds <span class="badge">{{ feeds | length }}</span>
+    {% if bridge.ok %}<span class="chip chip-green">bridge open{{ ' · ' ~ bridge.me_masked if bridge.me_masked }}</span>{% else %}<span class="chip chip-amber">bridge {{ bridge.status }}</span>{% endif %}</h2>
+  <p class="muted small">After every collect run (and on <em>Post now</em>) each enabled feed posts the new jobs that pass its filters to its WhatsApp group: batches of 8 jobs per message, at most <em>max per run</em> jobs, newest first. A job is never posted to the same feed twice; a failed send is retried next run. Readers need no account: the messages carry the apply link only.</p>
+
+  {% if feed_preview %}
+  <div class="card" style="margin:8px 0 12px">
+    <h3>Dry run · {{ feed_preview.name }}</h3>
+    <p class="small muted">{{ feed_preview.candidates }} matching job(s) not posted yet; {{ feed_preview.messages | length }} message(s) would be sent{% if feed_preview.skipped %} ({{ feed_preview.skipped }}){% endif %}. Nothing was sent, nothing was recorded.</p>
+    {% for m in feed_preview.messages %}<pre class="small" style="white-space:pre-wrap;border:1px solid var(--border);border-radius:6px;padding:8px">{{ m }}</pre>{% else %}<p class="empty">Nothing to post right now.</p>{% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="table-wrap"><table>
+    <thead><tr><th>Feed</th><th>Group</th><th>Filters</th><th>Enabled</th><th>Last run</th><th>Posted</th><th></th></tr></thead>
+    {% for f in feeds %}
+    <tr>
+      <td><strong>{{ f.name }}</strong><div class="mono small muted">{{ f.id }} · max {{ f.max_per_run }}/run</div></td>
+      <td class="small">{{ group_names.get(f.group_jid, '') }}<div class="mono small muted">{{ f.group_jid }}</div></td>
+      <td class="small">{{ feed_summary(f) }}</td>
+      <td>{% if f.enabled %}<span class="chip chip-green">on</span>{% else %}<span class="chip chip-gray">off</span>{% endif %}</td>
+      <td class="small">{% if f.last_run %}{{ f.last_run | dt }}{% else %}<span class="muted">never</span>{% endif %}</td>
+      <td>{{ f.posted_count }}</td>
+      <td><div class="row">
+        <a class="btn btn-sm" href="/admin?feed={{ f.id }}#feed-form">Edit</a>
+        <form method="post" action="/admin/feeds/{{ f.id }}/preview"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sm">Run now (dry run)</button></form>
+        <form method="post" action="/admin/feeds/{{ f.id }}/run" onsubmit="return confirm('Post this feed\'s new matches to its WhatsApp group now?')"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sm btn-primary" {{ 'disabled' if not f.enabled }}>Post now</button></form>
+        <form method="post" action="/admin/feeds/{{ f.id }}/{{ 'disable' if f.enabled else 'enable' }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sm">{{ 'Disable' if f.enabled else 'Enable' }}</button></form>
+        <form method="post" action="/admin/feeds/{{ f.id }}/remove" onsubmit="return confirm('Remove this feed and its posted-job records?')"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sm btn-danger">Remove</button></form>
+      </div></td>
+    </tr>
+    {% else %}<tr><td colspan="7" class="empty">No feeds yet. Add one below.</td></tr>{% endfor %}
+  </table></div>
+
+  <form method="post" action="/admin/feeds" id="feed-form" style="margin-top:12px">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% if feed_edit %}<input type="hidden" name="id" value="{{ feed_edit.id }}">{% endif %}
+    <h3>{% if feed_edit %}Edit feed: {{ feed_edit.name }} <a class="btn btn-sm" href="/admin#feeds">cancel</a>{% else %}Add feed{% endif %}</h3>
+    <div class="fields">
+      <div class="field"><label>Name (shown in the message header)</label><input type="text" name="name" value="{{ feed_form.name if feed_edit else '' }}" maxlength="60" required></div>
+      <div class="field"><label>WhatsApp group (the bridge account must be a member)</label>
+        <select name="group_jid">
+          <option value="">— paste a jid below —</option>
+          {% if feed_form.group_jid and feed_form.group_jid not in group_names %}<option value="{{ feed_form.group_jid }}" selected>{{ feed_form.group_jid }} (not in the bridge's list)</option>{% endif %}
+          {% for g in groups %}<option value="{{ g.jid }}" {{ 'selected' if g.jid == feed_form.group_jid }}>{{ g.name }} · {{ g.jid }}</option>{% endfor %}
+        </select>
+        <input type="text" name="group_jid_text" placeholder="or paste a group jid: 120363...@g.us" style="margin-top:4px">
+        {% if not groups %}<p class="muted small">The bridge's group list is empty ({{ bridge.status }}); paste the jid from <code>jobapply alerts groups</code>.</p>{% endif %}</div>
+      <div class="field"><label>Roles (free text, one per line; all words must be in the title)</label><textarea name="roles">{{ feed_form.filters.roles | join('\n') }}</textarea></div>
+      <div class="field"><label>Keywords include (any, title or description)</label><textarea name="keywords_include">{{ feed_form.filters.keywords_include | join('\n') }}</textarea></div>
+      <div class="field"><label>Keywords exclude (title)</label><textarea name="keywords_exclude">{{ feed_form.filters.keywords_exclude | join('\n') }}</textarea></div>
+      <div class="field"><label>Locations (use <code>remote</code> for remote jobs)</label><textarea name="locations">{{ feed_form.filters.locations | join('\n') }}</textarea></div>
+      <div class="field"><label>Sources (empty = all; one per line)</label><textarea name="sources">{{ feed_form.filters.sources | join('\n') }}</textarea>
+        {% if feed_sources %}<p class="muted small">Known: {{ feed_sources | join(', ') }}</p>{% endif %}</div>
+      <div>
+        <div class="field"><label>Posted within (hours; 0 = any age)</label><input type="number" name="max_age_hours" min="0" max="720" value="{{ feed_form.filters.max_age_hours }}"></div>
+        <div class="field"><label>Max jobs per run (1–50)</label><input type="number" name="max_per_run" min="1" max="50" value="{{ feed_form.max_per_run }}"></div>
+        <div class="field"><label>Minimum salary (posted maximum must reach this; empty = any)</label><input type="number" name="min_salary" min="0" value="{{ feed_form.filters.min_salary or '' }}"></div>
+        <label class="check"><input type="checkbox" name="remote_only" value="1" {{ 'checked' if feed_form.filters.remote_only }}> Remote only</label>
+        <label class="check"><input type="checkbox" name="enabled" value="1" {{ 'checked' if feed_form.enabled }}> Enabled</label>
+      </div>
+    </div>
+    <div class="field"><label>Career fields (pick a field for every title variant, or expand it for specific sub-roles)</label>
+      {% with role_selected = feed_role_selected %}{% include "_role_picker.html" %}{% endwith %}
+    </div>
+    <button class="btn btn-primary">{{ 'Save feed' if feed_edit else 'Add feed' }}</button>
+  </form>
+</section>
+
 <section class="card" style="margin-top:16px">
   <h2>LLM providers <span class="badge">backend: {{ llm_backend }}</span></h2>
   <p class="muted small">Server failover order from <code>JOBAPPLY_LLM_PROVIDERS</code>, one row per server key (keys of one provider rotate round-robin and cool down one at a time). Health is for this process since start; usage is the last 30 days.</p>

@@ -492,10 +492,14 @@ def apply_job(session: WellfoundSession, application: Application, *, dry_run: b
 
 
 def pick_wellfound_applications(session: Any, user: User, limit: int) -> list[tuple[Application, Job]]:
-    """Approved then queued applications on Wellfound job pages (for the wiring agent's runner)."""
+    """Approved then queued applications on Wellfound job pages (for the wiring agent's runner). Empty for a
+    user in notify-only mode (`pipeline.alerts.notify_only_skip`)."""
+    from jobapply.pipeline.alerts import notify_only_skip
     from jobapply.pipeline.apply import APPLY_STATUSES, site_for_job
     from jobapply.repo import UserScope
 
+    if notify_only_skip(user, "pick_wellfound_applications"):
+        return []
     scope = UserScope(session, user)
     rows = scope.applications_with_jobs(Application.status.in_(APPLY_STATUSES), limit=500)
     rows.sort(key=lambda r: (r[0].status != AppStatus.approved, -(r[0].score or 0)))

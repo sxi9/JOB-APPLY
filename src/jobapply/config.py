@@ -101,9 +101,10 @@ class Settings(BaseSettings):
     # (ATS APIs for the hot company list + LinkedIn guest), for minute-level recency.
     hot_interval_minutes: int = 5
 
-    # Notifier
+    # Notifier. `public_url` is the dashboard address put into WhatsApp alerts (the job links).
     whatsapp_base_url: str | None = None
     whatsapp_token: SecretStr | None = None
+    public_url: str = "http://192.168.29.22:8010"
 
     # Browser. Leave empty to use Playwright's bundled Chromium.
     chromium_executable: str | None = None
