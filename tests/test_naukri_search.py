@@ -460,5 +460,6 @@ def test_browser_fallback_failure_is_logged_not_raised():
 
 def test_search_once_helper():
     routes = Routes({("a", 1): api_page(["1"])})
-    jobs = nsrch.search_once("a", hours_old=24 * 365 * 50, client=httpx.Client(transport=httpx.MockTransport(routes)), delay=0)
+    jobs = nsrch.search_once("a", hours_old=24 * 365 * 50, delay=0,
+                             client=httpx.Client(transport=httpx.MockTransport(routes)))
     assert [j.source_id for j in jobs] == ["1"]
