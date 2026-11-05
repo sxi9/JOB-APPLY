@@ -371,13 +371,15 @@ def test_skip_if_cooldown_makes_no_requests():
 def test_politeness_delay_and_search_once():
     routes = Routes(pages={0: search_response([1, 2])}, postings={"1": job_page(1), "2": job_page(2)})
     slept: list[float] = []
-    jobs = search_once("python", "", 48, delay=2.0, with_details=True, client=routes.client())
+    # fixture dates are relative to the pinned NOW while search_once uses the real clock: wide windows
+    jobs = search_once("python", "", 24 * 365 * 50, delay=2.0, with_details=True, client=routes.client())
     assert len(jobs) == 2 and all(j.raw["details_fetched"] for j in jobs)
     c = InstahyreCollector(["x"], client=routes.client(), delay=2.0, sleep=slept.append, with_details=False)
     c.collect()
     c.collect()
     assert slept and all(1.4 <= s <= 2.6 for s in slept)
-    jobs = search_once(["python", "backend"], max_results=1, with_details=False, delay=0, client=routes.client())
+    jobs = search_once(["python", "backend"], hours_old=24 * 365 * 50, max_results=1, with_details=False, delay=0,
+                       client=routes.client())
     assert len(jobs) == 1
     with pytest.raises(ValueError):
         search_once("x", job_type="part_time", client=routes.client())
