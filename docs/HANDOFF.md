@@ -68,9 +68,20 @@ command and restored after; Workday auto-submit stays off so nothing can be subm
 Next live step once a phone number is on the Profile: requeue application 239 and rerun; expect My Experience
 (resume upload, work history) to be the next thing to tune.
 
+## WhatsApp (2026-11-05)
+
+Alerts go out through the whatsapp-headless bridge on the box (`http://127.0.0.1:3001/api`, bearer token in
+`.env`), from the owner's own number. Group **JOB-APPLY** receives sai's new-job posts; every collect posts new
+matches for each user with alerts on (`pipeline/alerts.py`: claimed per target before sending, batches of 8,
+5 messages per run). Per-user `apply_mode` notify|auto gates every picker and runner. Admin group feeds post to
+groups with no account (`pipeline/feeds.py`, `jobapply feeds`). Docs: docs/NOTIFICATIONS.md. Working on this
+from a laptop without a checkout: edit/test on the box over ssh, commit there, relay the commit to GitHub from
+a bare clone (`git fetch ssh://box/home/saibala/jobapply +main:refs/heads/main && git push`), deploy with
+`deploy/deploy-user.sh --no-pull`.
+
 ## Known gaps / next candidates
 
-Per-user billing and limits (needed before other people use it); scheduler tasks for assisted sites and Workday
+Subscriber bot over WhatsApp (inbound webhook in the bridge + name/field onboarding); student preset + internship feed; invite/approval access control with free plan caps; scheduler tasks for assisted sites and Workday
 (CLI entry points only today); `applied_today(site="external")` counts 0 for unknown hosts; a Workday host
 reached via redirect inside the navigator pauses instead of re-queuing under workday; hosted deploy with HTTPS
 and consent/terms; LinkedIn li_at rotation (re-login once, then reconnect).
